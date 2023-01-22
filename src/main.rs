@@ -1,78 +1,500 @@
-use std::env;
-use std::io::{stdin, stdout, Write};
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::ffi::OsStr;
+use std::ffi::OsString;
+use std::path::PathBuf;
 
-fn main() {
-    loop {
-        // use the `>` character as the prompt
-        // need to explicitly flush this to ensure it prints before read_line
-        print!("> ");
-        stdout().flush().unwrap();
+use anyhow::Ok;
+use clap::builder::NonEmptyStringValueParser;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
-        let mut input = String::new();
-        stdin().read_line(&mut input).unwrap();
+use anyhow::{bail, Context, Result};
+use futures::future::OrElse;
+use futures::{StreamExt, TryStreamExt};
+use k8s_openapi::{
+    apimachinery::pkg::apis::meta::v1::Time,
+    chrono::{Duration, Utc},
+};
 
-        // read_line leaves a trailing newline, which trim removes
-        // this needs to be peekable so we can determine when we are on the last command
-        let mut commands = input.trim().split(" | ").peekable();
-        let mut previous_command = None;
+use kube::{
+    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt},
+    core::GroupVersionKind,
+    discovery::{ApiCapabilities, ApiResource, Discovery, Scope},
+    runtime::{
+        wait::{await_condition, conditions::is_deleted},
+        watcher, WatchStreamExt,
+    },
+    Client,
+};
+use tracing::*;
 
-        while let Some(command) = commands.next() {
-            // everything after the first whitespace character is interpreted as args to the command
-            let mut parts = command.trim().split_whitespace();
-            let command = parts.next().unwrap();
-            let args = parts;
 
-            match command {
-                "cd" => {
-                    // default to '/' as new directory if one was not provided
-                    let new_dir = args.peekable().peek().map_or("/", |x| *x);
-                    let root = Path::new(new_dir);
-                    if let Err(e) = env::set_current_dir(&root) {
-                        eprintln!("{}", e);
-                    }
+/// A fictional versioning CLI
+#[derive(Debug, Parser)] // requires `derive` feature
+#[command(name = "git")]
+#[command(about = "A fictional versioning CLI", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-                    previous_command = None;
-                }
-                "exit" => return,
-                command => {
-                    let stdin = previous_command.map_or(Stdio::inherit(), |output: Child| {
-                        Stdio::from(output.stdout.unwrap())
-                    });
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Get resource from cluster (in default namespace)
+    #[command(arg_required_else_help = true)]
+    Get {
+        /// The remote to clone
+        #[arg(long, short, default_value_t = OutputMode::Pretty)]
+        output: OutputMode,
+        #[arg(long, short = 'l')]
+        selector: Option<String>,
+        #[arg(long, short)]
+        namespace: Option<String>,
+        #[arg(long, short = 'A')]
+        all: bool,
+        resource: Option<String>,
+        name: Option<String>,
+    },
+    /// Compare two commits
+    #[command(arg_required_else_help = true)]
+    Edit {
+        #[arg(long, short, default_value_t = OutputMode::Pretty)]
+        output: OutputMode,
+        #[arg(long, short = 'l')]
+        selector: Option<String>,
+        #[arg(long, short)]
+        namespace: Option<String>,
+        #[arg(long, short = 'A')]
+        all: bool,
+        resource: Option<String>,
+        name: Option<String>,
+    },
+    /// pushes things
+    #[command(arg_required_else_help = true)]
+    Delete {
+        #[arg(long, short, default_value_t = OutputMode::Pretty)]
+        output: OutputMode,
+        #[arg(long, short = 'l')]
+        selector: Option<String>,
+        #[arg(long, short)]
+        namespace: Option<String>,
+        #[arg(long, short = 'A')]
+        all: bool,
+        resource: Option<String>,
+        name: Option<String>,
 
-                    let stdout = if commands.peek().is_some() {
-                        // there is another command piped behind this one
-                        // prepare to send output to the next command
-                        Stdio::piped()
-                    } else {
-                        // there are no more commands piped behind this one
-                        // send output to shell stdout
-                        Stdio::inherit()
-                    };
+    },
+    /// adds things
+    #[command(arg_required_else_help = true)]
+    Watch {
+        #[arg(long, short, default_value_t = OutputMode::Pretty)]
+        output: OutputMode,
+        #[arg(long, short = 'l')]
+        selector: Option<String>,
+        #[arg(long, short)]
+        namespace: Option<String>,
+        #[arg(long, short = 'A')]
+        all: bool,
+        resource: Option<String>,
+        name: Option<String>,
+    },
+    Apply{
+        #[arg(long, short, default_value_t = OutputMode::Pretty)]
+        output: OutputMode,
+        #[arg(long, short)]
+        file: Option<std::path::PathBuf>,
+        #[arg(long, short = 'l')]
+        selector: Option<String>,
+        #[arg(long, short)]
+        namespace: Option<String>,
+        #[arg(long, short = 'A')]
+        all: bool,
+        resource: Option<String>,
+        name: Option<String>,
+    },
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
+}
 
-                    let output = Command::new(command)
-                        .args(args)
-                        .stdin(stdin)
-                        .stdout(stdout)
-                        .spawn();
+#[derive(Clone, PartialEq, Eq, clap::ValueEnum, Debug)]
+enum OutputMode {
+    Pretty,
+    Yaml,
+}
 
-                    match output {
-                        Ok(output) => {
-                            previous_command = Some(output);
-                        }
-                        Err(e) => {
-                            previous_command = None;
-                            eprintln!("{}", e);
-                        }
-                    };
+impl OutputMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pretty => "pretty",
+            Self::Yaml => "yaml",
+        }
+    }
+}
+
+impl std::fmt::Display for OutputMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(self.as_str())
+    }
+}
+
+#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
+enum ColorWhen {
+    Always,
+    Auto,
+    Never,
+}
+
+impl std::fmt::Display for ColorWhen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_possible_value()
+            .expect("no values are skipped")
+            .get_name()
+            .fmt(f)
+    }
+}
+
+fn resolve_api_resource(discovery: &Discovery, name: &str) -> Option<(ApiResource, ApiCapabilities)> {
+    // iterate through groups to find matching kind/plural names at recommended versions
+    // and then take the minimal match by group.name (equivalent to sorting groups by group.name).
+    // this is equivalent to kubectl's api group preference
+    discovery
+        .groups()
+        .flat_map(|group| {
+            group
+                .resources_by_stability()
+                .into_iter()
+                .map(move |res| (group, res))
+        })
+        .filter(|(_, (res, _))| {
+            // match on both resource name and kind name
+            // ideally we should allow shortname matches as well
+            name.eq_ignore_ascii_case(&res.kind) || name.eq_ignore_ascii_case(&res.plural)
+        })
+        .min_by_key(|(group, _res)| group.name())
+        .map(|(_, res)| res)
+
+}
+
+fn dynamic_api(
+    ar: ApiResource,
+    caps: ApiCapabilities,
+    client: Client,
+    ns: &Option<String>,
+    all: bool,
+) -> Api<DynamicObject> {
+    if caps.scope == Scope::Cluster || all {
+        Api::all_with(client, &ar)
+    } else if let Some(namespace) = ns {
+        Api::namespaced_with(client, namespace, &ar)
+    } else {
+        Api::default_namespaced_with(client, &ar)
+    }
+}
+
+
+fn format_creation_since(time: Option<Time>) -> String {
+    format_duration(Utc::now().signed_duration_since(time.unwrap().0))
+}
+fn format_duration(dur: Duration) -> String {
+    match (dur.num_days(), dur.num_hours(), dur.num_minutes()) {
+        (days, _, _) if days > 0 => format!("{days}d"),
+        (_, hours, _) if hours > 0 => format!("{hours}h"),
+        (_, _, mins) => format!("{mins}m"),
+    }
+}
+
+pub fn multidoc_deserialize(data: &str) -> Result<Vec<serde_yaml::Value>> {
+    use serde::Deserialize;
+    let mut docs = vec![];
+    for de in serde_yaml::Deserializer::from_str(data) {
+        docs.push(serde_yaml::Value::deserialize(de)?);
+    }
+    Ok(docs)
+}
+
+
+
+#[derive(Clone, PartialEq, Eq, Debug, clap::ValueEnum)]
+enum Verb {
+    Get,
+    Delete,
+    Edit,
+    Watch,
+    Apply,
+}
+
+struct App {
+    pub output: OutputMode,
+    pub file: Option<std::path::PathBuf>,
+    pub selector: Option<String>,
+    pub namespace: Option<String>,
+    pub all: bool,
+    pub verb: Verb,
+    pub resource: Option<String>,
+    pub name: Option<String>,
+}
+
+fn prepare_api_object_lp (app: &App, discovery: &Discovery, client: Client) -> (Option<Api<DynamicObject>>, Option<ListParams>) {
+
+
+    let res = resolve_api_resource(&discovery, app.resource.as_ref().unwrap().as_str())
+    .with_context(|| format!("resource {:?} not found in cluster", app.resource));
+
+    let ar;
+    let caps;
+    if res.is_ok() {
+        (ar, caps) = res.unwrap();
+    } else {
+        return (None, None);
+    }
+
+    let mut lp = ListParams::default();
+    if let Some(label) = &app.selector {
+        lp = lp.labels(label);
+    }
+    let api = dynamic_api(ar, caps, client, &app.namespace, app.all);
+
+    (Some(api), Some(lp))
+}
+
+impl App {
+    fn new (output: OutputMode, file: Option<std::path::PathBuf>, selector: Option<String>, namespace: Option<String>,  all: bool,  verb: Verb, resource: Option<String>, name: Option<String>) ->  App {
+
+         App {
+            output,
+            file,
+            selector,
+            namespace,
+            all,
+            verb,
+            resource,
+            name,
+        }
+
+
+    }
+
+    async fn get(&self, api: Api<DynamicObject>, lp: ListParams) -> Result<()> {
+        let mut result: Vec<_> = if let Some(n) = &self.name {
+            vec![api.get(n).await?]
+        } else {
+            api.list(&lp).await?.items
+        };
+        result.iter_mut().for_each(|x| x.managed_fields_mut().clear()); // hide managed fields
+
+        match self.output {
+            OutputMode::Yaml => println!("{}", serde_yaml::to_string(&result)?),
+            OutputMode::Pretty => {
+                // Display style; size columns according to longest name
+                let max_name = result.iter().map(|x| x.name_any().len() + 2).max().unwrap_or(63);
+                println!("{0:<width$} {1:<20}", "NAME", "AGE", width = max_name);
+                for inst in result {
+                    let age = format_creation_since(inst.creation_timestamp());
+                    println!("{0:<width$} {1:<20}", inst.name_any(), age, width = max_name);
                 }
             }
         }
-
-        if let Some(mut final_command) = previous_command {
-            // block until the final command has finished
-            final_command.wait().unwrap();
-        }
+        Ok(())
     }
+
+    async fn delete(&self, api: Api<DynamicObject>, lp: ListParams) -> Result<()> {
+        if let Some(n) = &self.name {
+            if let either::Either::Left(pdel) = api.delete(n, &Default::default()).await? {
+                // await delete before returning
+                await_condition(api, n, is_deleted(&pdel.uid().unwrap())).await?;
+            }
+        } else {
+            api.delete_collection(&Default::default(), &lp).await?;
+        }
+        Ok(())
+    }
+
+
+
+    async fn watch(&self, api: Api<DynamicObject>, mut lp: ListParams) -> Result<()> {
+        if let Some(n) = &self.name {
+            lp = lp.fields(&format!("metadata.name={n}"));
+        }
+        // present a dumb table for it for now. kubectl does not do this anymore.
+        let mut stream = watcher(api, lp).applied_objects().boxed();
+        println!("{0:<width$} {1:<20}", "NAME", "AGE", width = 63);
+        while let Some(inst) = stream.try_next().await? {
+            let age = format_creation_since(inst.creation_timestamp());
+            println!("{0:<width$} {1:<20}", inst.name_any(), age, width = 63);
+        }
+        Ok(())
+    }
+
+    async fn edit(&self, api: Api<DynamicObject>) -> Result<()> {
+        if let Some(n) = &self.name {
+            let mut orig = api.get(n).await?;
+            orig.managed_fields_mut().clear(); // hide managed fields
+            let input = serde_yaml::to_string(&orig)?;
+            debug!("opening {} in {:?}", orig.name_any(), edit::get_editor());
+            let edited = edit::edit(&input)?;
+            if edited != input {
+                info!("updating changed object {}", orig.name_any());
+                let data: DynamicObject = serde_yaml::from_str(&edited)?;
+                // NB: simplified kubectl constructs a merge-patch of differences
+                api.replace(n, &Default::default(), &data).await?;
+            }
+        } else {
+            warn!("need a name to edit");
+        }
+        Ok(())
+    }
+
+    async fn apply(&self, client: Client, discovery: &Discovery) -> Result<()> {
+        let ssapply = PatchParams::apply("kubectl-light").force();
+        let pth = self.file.clone().expect("apply needs a -f file supplied");
+        let yaml =
+            std::fs::read_to_string(&pth).with_context(|| format!("Failed to read {}", pth.display()))?;
+        for doc in multidoc_deserialize(&yaml)? {
+            let obj: DynamicObject = serde_yaml::from_value(doc)?;
+            let gvk = if let Some(tm) = &obj.types {
+                GroupVersionKind::try_from(tm)?
+            } else {
+                bail!("cannot apply object without valid TypeMeta {:?}", obj);
+            };
+            let name = obj.name_any();
+            if let Some((ar, caps)) = discovery.resolve_gvk(&gvk) {
+                let api = dynamic_api(ar, caps, client.clone(), &self.namespace, false);
+                trace!("Applying {}: \n{}", gvk.kind, serde_yaml::to_string(&obj)?);
+                let data: serde_json::Value = serde_json::to_value(&obj)?;
+                let _r = api.patch(&name, &ssapply, &Patch::Apply(data)).await?;
+                info!("applied {} {}", gvk.kind, name);
+            } else {
+                warn!("Cannot apply document for unknown {:?}", gvk);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Cli::parse();
+
+    let client = Client::try_default().await?;
+    let discovery = Discovery::new(client.clone()).run().await?;
+
+    match args.command {
+        Commands::Get {
+            output,
+            resource,
+            name,namespace, 
+            all, 
+            selector 
+        } => {
+            
+            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            //trace!("kubectl get {:?}, {:?} {output}", resource, name);
+            if let Some(resource) = &app.resource {
+                let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
+
+                if api.is_none() {
+                    bail!("resource {:?} not found in cluster", resource);
+                }
+
+                app.get(api.unwrap(), lp.unwrap()).await?;
+                return Ok(());
+            }
+            else {
+                bail!("Missing get need");
+            }
+
+        }
+        Commands:: Edit {
+            output,
+            resource,
+            name,namespace, 
+            all, 
+            selector 
+        } => {
+            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            //trace!("kubectl get {:?}, {:?} {output}", resource, name);
+            if let Some(resource) = &app.resource {
+                let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
+
+                if api.is_none() {
+                    bail!("resource {:?} not found in cluster", resource);
+                }
+
+                app.edit(api.unwrap()).await?;
+                return Ok(());
+            }
+            else {
+                bail!("Missing get need");
+            }
+
+        }
+        Commands::Delete {
+            output,
+            resource,
+            name,namespace, 
+            all, 
+            selector 
+        } => {
+            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            //trace!("kubectl get {:?}, {:?} {output}", resource, name);
+            if let Some(resource) = &app.resource {
+                let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
+
+                if api.is_none() {
+                    bail!("resource {:?} not found in cluster", resource);
+                }
+
+                app.delete(api.unwrap(), lp.unwrap()).await?;
+                return Ok(());
+            }
+            else {
+                bail!("Missing get need");
+            }
+            
+        }
+        Commands::Watch {
+            output,
+            resource,
+            name,namespace, 
+            all, 
+            selector 
+         } => {
+            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            //trace!("kubectl get {:?}, {:?} {output}", resource, name);
+            if let Some(resource) = &app.resource {
+                let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
+
+                if api.is_none() {
+                    bail!("resource {:?} not found in cluster", resource);
+                }
+
+                app.watch(api.unwrap(), lp.unwrap()).await?;
+                return Ok(());
+            }
+            else {
+                bail!("Missing get need");
+            }
+        }
+        Commands::Apply {
+            output,
+            resource,
+            name,namespace, 
+            all, 
+            selector,
+            file
+        } => {
+            let app = App::new(output, file, selector, namespace, all, Verb::Get, resource, name);
+            //trace!("kubectl get {:?}, {:?} {output}", resource, name);
+  
+            app.apply(client, &discovery).await?;
+            
+        }
+        Commands::External(args) => {
+           return  Ok(());
+        }
+
+
+    }
+
+    Ok(())
+
+    // Continued program logic goes here...
 }

@@ -1,6 +1,40 @@
 [package]
-name = "bubble-shell"
+name = "kube-examples"
 version = "0.1.0"
-authors = ["Josh Mcguigan"]
+authors = [
+  "clux <sszynrae@gmail.com>",
+  "Teo Klestrup Röijezon <teo@nullable.se>",
+  "kazk <kazk.dev@gmail.com>",
+]
+publish = false
+edition = "2021"
+license = "Apache-2.0"
+
+[package.metadata.release]
+release = false
+
+
+[features]
+default = [ "kubederive", "ws", "latest", "runtime"]
+kubederive = ["kube/derive"]
+runtime = ["kube/runtime"]
+ws = ["kube/ws"]
+latest = ["k8s-openapi/v1_25"]
 
 [dependencies]
+futures = "0.3.17"
+tracing = "0.1.36"
+tracing-subscriber = "0.3.3"
+anyhow = "1.0.44"
+tokio = { version = "1.14.0", features = ["full"]} 
+tokio-util = "0.7.0"
+kube = { version = "0.78.0", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.17.0" }
+serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "1.0.68"
+serde_yaml = "0.8.21"
+clap = { version = "4.1.1", features = ["derive"] }
+#clap = "3.0.0-beta.2"
+#clap = { version = "4.0", default-features = false, features = ["std", "cargo", "derive"] }
+either = "1.6.1"
+edit = "0.1.3"
