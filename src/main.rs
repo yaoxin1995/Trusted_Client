@@ -7,15 +7,17 @@ use clap::builder::NonEmptyStringValueParser;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use anyhow::{bail, Context, Result};
+use futures::FutureExt;
 use futures::future::OrElse;
 use futures::{StreamExt, TryStreamExt};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::Time,
     chrono::{Duration, Utc},
+    api::core::v1::Pod,
 };
 
 use kube::{
-    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt},
+    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt, LogParams},
     core::GroupVersionKind,
     discovery::{ApiCapabilities, ApiResource, Discovery, Scope},
     runtime::{
@@ -24,6 +26,7 @@ use kube::{
     },
     Client,
 };
+use tokio::time::sleep_until;
 use tracing::*;
 
 
@@ -109,6 +112,10 @@ enum Commands {
         #[arg(long, short = 'A')]
         all: bool,
         resource: Option<String>,
+        name: Option<String>,
+    },
+        /// Apply a configuration to a resource by file name
+    Logs{
         name: Option<String>,
     },
     #[command(external_subcommand)]
@@ -376,8 +383,32 @@ async fn main() -> Result<()> {
 
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
+    println!("kubectl logs");
 
     match args.command {
+        Commands::Logs {
+            name
+        } => {
+            println!("kubectl logs {:?}", name);
+            let pods: Api<Pod> = Api::default_namespaced(client);
+            let mut logs = pods
+                .log_stream(&name.unwrap(), &LogParams {
+                    follow: true,
+                    tail_lines: None,
+                    ..LogParams::default()
+                })
+                .await?
+                .boxed();
+
+            
+            while let Some(line) = logs.try_next().await? {
+                println!("{:?}", String::from_utf8_lossy(&line));
+            }
+            println!("kubectl logs finised");
+
+            return Ok(());
+
+        },
         Commands::Get {
             output,
             resource,
