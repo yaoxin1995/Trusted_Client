@@ -53,7 +53,7 @@ enum Commands {
         resource: Option<String>,
         name: Option<String>,
     },
-    /// Compare two commits
+    /// Edit a resource
     #[command(arg_required_else_help = true)]
     Edit {
         #[arg(long, short, default_value_t = OutputMode::Pretty)]
@@ -67,7 +67,7 @@ enum Commands {
         resource: Option<String>,
         name: Option<String>,
     },
-    /// pushes things
+    /// Delete a resource
     #[command(arg_required_else_help = true)]
     Delete {
         #[arg(long, short, default_value_t = OutputMode::Pretty)]
@@ -82,7 +82,7 @@ enum Commands {
         name: Option<String>,
 
     },
-    /// adds things
+    /// Watches a Kubernetes Resource for changes continuously
     #[command(arg_required_else_help = true)]
     Watch {
         #[arg(long, short, default_value_t = OutputMode::Pretty)]
@@ -96,6 +96,7 @@ enum Commands {
         resource: Option<String>,
         name: Option<String>,
     },
+    /// Apply a configuration to a resource by file name
     Apply{
         #[arg(long, short, default_value_t = OutputMode::Pretty)]
         output: OutputMode,
