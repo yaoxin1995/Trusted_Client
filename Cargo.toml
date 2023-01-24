@@ -1,10 +1,8 @@
 [package]
-name = "kube-examples"
+name = "secure-client"
 version = "0.1.0"
 authors = [
-  "clux <sszynrae@gmail.com>",
-  "Teo Klestrup Röijezon <teo@nullable.se>",
-  "kazk <kazk.dev@gmail.com>",
+  "yaoxinjing <yaoxinjing517@gmail.com>",
 ]
 publish = false
 edition = "2021"

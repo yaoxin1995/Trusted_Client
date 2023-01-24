@@ -1,14 +1,9 @@
-use std::ffi::OsStr;
 use std::ffi::OsString;
-use std::path::PathBuf;
 
 use anyhow::Ok;
-use clap::builder::NonEmptyStringValueParser;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use anyhow::{bail, Context, Result};
-use futures::FutureExt;
-use futures::future::OrElse;
 use futures::{StreamExt, TryStreamExt};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::Time,
@@ -17,7 +12,7 @@ use k8s_openapi::{
 };
 
 use kube::{
-    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt, LogParams},
+    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt},
     core::GroupVersionKind,
     discovery::{ApiCapabilities, ApiResource, Discovery, Scope},
     runtime::{
@@ -26,7 +21,6 @@ use kube::{
     },
     Client,
 };
-use tokio::time::sleep_until;
 use tracing::*;
 
 
@@ -100,6 +94,7 @@ enum Commands {
         name: Option<String>,
     },
     /// Apply a configuration to a resource by file name
+    #[command(arg_required_else_help = true)]
     Apply{
         #[arg(long, short, default_value_t = OutputMode::Pretty)]
         output: OutputMode,
@@ -114,9 +109,16 @@ enum Commands {
         resource: Option<String>,
         name: Option<String>,
     },
-        /// Apply a configuration to a resource by file name
+    /// Get logs of the first container in Pod
+    #[command(arg_required_else_help = true)]
     Logs{
-        name: Option<String>,
+        /// Follow the log stream of the pod. Defaults to `false`.
+        #[arg(long, short='f')]
+        follow: Option<bool>,
+        /// Pod name
+        pod_name: Option<String>,
+        /// Container name in Pod, by default, the log return the log of the first container in Pod
+        container_name: Option<String>,
     },
     #[command(external_subcommand)]
     External(Vec<OsString>),
@@ -220,14 +222,6 @@ pub fn multidoc_deserialize(data: &str) -> Result<Vec<serde_yaml::Value>> {
 
 
 
-#[derive(Clone, PartialEq, Eq, Debug, clap::ValueEnum)]
-enum Verb {
-    Get,
-    Delete,
-    Edit,
-    Watch,
-    Apply,
-}
 
 struct App {
     pub output: OutputMode,
@@ -235,7 +229,6 @@ struct App {
     pub selector: Option<String>,
     pub namespace: Option<String>,
     pub all: bool,
-    pub verb: Verb,
     pub resource: Option<String>,
     pub name: Option<String>,
 }
@@ -264,7 +257,7 @@ fn prepare_api_object_lp (app: &App, discovery: &Discovery, client: Client) -> (
 }
 
 impl App {
-    fn new (output: OutputMode, file: Option<std::path::PathBuf>, selector: Option<String>, namespace: Option<String>,  all: bool,  verb: Verb, resource: Option<String>, name: Option<String>) ->  App {
+    fn new (output: OutputMode, file: Option<std::path::PathBuf>, selector: Option<String>, namespace: Option<String>,  all: bool, resource: Option<String>, name: Option<String>) ->  App {
 
          App {
             output,
@@ -272,7 +265,6 @@ impl App {
             selector,
             namespace,
             all,
-            verb,
             resource,
             name,
         }
@@ -377,37 +369,55 @@ impl App {
     }
 }
 
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
-    println!("kubectl logs");
+    // println!("kubectl logs");
 
     match args.command {
         Commands::Logs {
-            name
+            pod_name,
+            container_name,
+            follow
         } => {
-            println!("kubectl logs {:?}", name);
-            let pods: Api<Pod> = Api::default_namespaced(client);
-            let mut logs = pods
-                .log_stream(&name.unwrap(), &LogParams {
-                    follow: true,
-                    tail_lines: None,
-                    ..LogParams::default()
-                })
-                .await?
-                .boxed();
+            // println!("kubectl logs pod: {:?}, container: {:?}, follow: {:?}", pod_name, container_name, follow);
 
-            
-            while let Some(line) = logs.try_next().await? {
-                println!("{:?}", String::from_utf8_lossy(&line));
+            if pod_name.is_some() == true {
+                let is_follow = if let Some(f) = follow  {
+                    f 
+                } else {
+                    false
+                };
+
+                let pods: Api<Pod> = Api::default_namespaced(client);
+                // println!("kubectl logs pod: {:?}, container: {:?}, follow: {:?}", pod_name, container_name, is_follow);
+                let mut logs = pods
+                .log_stream(
+                    &pod_name.unwrap(), 
+                    &kube::api::LogParams {
+                        follow: is_follow,
+                        // tail_lines: Some(1),
+                        container: container_name,
+                        // timestamps: false,
+                        ..kube::api::LogParams::default()
+                    }
+                ).await?.boxed();
+                
+                while let Some(line) = logs.try_next().await? {
+                    let text;
+                    unsafe{
+                        text = std::str::from_utf8_unchecked(&line);
+                    }
+
+                    print!("{}", text);
+                }
+
             }
-            println!("kubectl logs finised");
-
             return Ok(());
-
         },
         Commands::Get {
             output,
@@ -417,7 +427,7 @@ async fn main() -> Result<()> {
             selector 
         } => {
             
-            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            let app = App::new(output, None, selector, namespace, all, resource, name);
             //trace!("kubectl get {:?}, {:?} {output}", resource, name);
             if let Some(resource) = &app.resource {
                 let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
@@ -441,10 +451,10 @@ async fn main() -> Result<()> {
             all, 
             selector 
         } => {
-            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            let app = App::new(output, None, selector, namespace, all, resource, name);
             //trace!("kubectl get {:?}, {:?} {output}", resource, name);
             if let Some(resource) = &app.resource {
-                let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
+                let (api, _) = prepare_api_object_lp(&app, &discovery, client);
 
                 if api.is_none() {
                     bail!("resource {:?} not found in cluster", resource);
@@ -465,7 +475,7 @@ async fn main() -> Result<()> {
             all, 
             selector 
         } => {
-            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            let app = App::new(output, None, selector, namespace, all, resource, name);
             //trace!("kubectl get {:?}, {:?} {output}", resource, name);
             if let Some(resource) = &app.resource {
                 let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
@@ -489,7 +499,7 @@ async fn main() -> Result<()> {
             all, 
             selector 
          } => {
-            let app = App::new(output, None, selector, namespace, all, Verb::Get, resource, name);
+            let app = App::new(output, None, selector, namespace, all, resource, name);
             //trace!("kubectl get {:?}, {:?} {output}", resource, name);
             if let Some(resource) = &app.resource {
                 let (api, lp) = prepare_api_object_lp(&app, &discovery, client);
@@ -513,13 +523,13 @@ async fn main() -> Result<()> {
             selector,
             file
         } => {
-            let app = App::new(output, file, selector, namespace, all, Verb::Get, resource, name);
+            let app = App::new(output, file, selector, namespace, all, resource, name);
             //trace!("kubectl get {:?}, {:?} {output}", resource, name);
   
             app.apply(client, &discovery).await?;
             
         }
-        Commands::External(args) => {
+        Commands::External(_args) => {
            return  Ok(());
         }
 
