@@ -12,7 +12,7 @@ use k8s_openapi::{
 };
 
 use kube::{
-    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt},
+    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt, AttachedProcess, AttachParams},
     core::GroupVersionKind,
     discovery::{ApiCapabilities, ApiResource, Discovery, Scope},
     runtime::{
@@ -35,6 +35,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Issue cmd to a container
+    /// Example: ./secure-client issue-cmd nginx "ls -t /var"
+    #[command(arg_required_else_help = true)]
+    IssueCmd {
+        pod_name: Option<String>,
+        cmd: Option<String>,
+    },
     /// Get resource from cluster (in default namespace)
     #[command(arg_required_else_help = true)]
     Get {
@@ -370,6 +377,28 @@ impl App {
 }
 
 
+async fn get_output(mut attached: AttachedProcess) -> Result<()> {
+    let mut stdout = tokio_util::io::ReaderStream::new(attached.stdout().unwrap());
+    // let out = stdout.
+    let mut stream_contents = Vec::new();
+
+    while let Some(chunk) = stdout.next().await {
+        stream_contents.extend_from_slice(&chunk?);
+     }
+
+    let str = String::from_utf8(stream_contents);
+    
+    if str.is_err() == true {
+        print!("{:?}", str);
+
+    }else {
+        print!("{}", str.unwrap());
+    }
+    Ok(())
+}
+
+
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
@@ -379,6 +408,34 @@ async fn main() -> Result<()> {
     // println!("kubectl logs");
 
     match args.command {
+        Commands::IssueCmd {
+            pod_name,
+            cmd
+        } => {
+
+            println!("pod_name {:?}, cmd {:?}", pod_name, cmd);
+            assert!(pod_name.is_some());
+            assert!(cmd.is_some());
+
+            let cmd = cmd.unwrap();
+
+            let split = cmd.split_whitespace();
+            let vec = split.collect::<Vec<&str>>();
+
+            println!("{:?}", vec);
+            let pods: Api<Pod> = Api::default_namespaced(client);
+
+            let attached = pods
+            .exec(
+                &pod_name.unwrap(),
+                vec,
+                &AttachParams::default().stderr(false),
+            )
+            .await?;
+            get_output(attached).await?
+
+
+        },
         Commands::Logs {
             pod_name,
             container_name,
