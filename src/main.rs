@@ -1,10 +1,9 @@
 use std::ffi::OsString;
 
-use anyhow::Ok;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use anyhow::{bail, Context, Result};
-use futures::{StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt, channel::mpsc::Sender, SinkExt};
 use k8s_openapi::{
     apimachinery::pkg::apis::meta::v1::Time,
     chrono::{Duration, Utc},
@@ -12,7 +11,7 @@ use k8s_openapi::{
 };
 
 use kube::{
-    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt, AttachedProcess, AttachParams},
+    api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt, AttachedProcess, AttachParams, TerminalSize},
     core::GroupVersionKind,
     discovery::{ApiCapabilities, ApiResource, Discovery, Scope},
     runtime::{
@@ -24,7 +23,7 @@ use kube::{
 use tracing::*;
 
 
-/// A fictional versioning CLI
+/// A kubectl like secure client
 #[derive(Debug, Parser)] // requires `derive` feature
 #[command(name = "git")]
 #[command(about = "A fictional versioning CLI", long_about = None)]
@@ -35,6 +34,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Allocate a terminal inside a container
+    /// This terminal is cross platform runable
+    #[command(arg_required_else_help = true)]
+    Terminal {
+        pod_name: Option<String>,
+        container_name: Option<String>,
+    },
     /// Issue cmd to a container
     /// Example: ./secure-client issue-cmd nginx "ls -t /var"
     #[command(arg_required_else_help = true)]
@@ -397,6 +403,108 @@ async fn get_output(mut attached: AttachedProcess) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)] use tokio::signal;
+use tokio::{io::AsyncWriteExt, select};
+
+#[cfg(unix)]
+// Send the new terminal size to channel when it change
+async fn handle_terminal_size(mut channel: Sender<TerminalSize>) -> Result<(), anyhow::Error> {
+    let (width, height) = crossterm::terminal::size()?;
+    channel.send(TerminalSize { height, width }).await?;
+
+    // create a stream to catch SIGWINCH signal
+    let mut sig = signal::unix::signal(signal::unix::SignalKind::window_change())?;
+    loop {
+        if (sig.recv().await).is_none() {
+            return Ok(());
+        }
+
+        let (width, height) = crossterm::terminal::size()?;
+        channel.send(TerminalSize { height, width }).await?;
+    }
+}
+
+#[cfg(windows)]
+// We don't support window for terminal size change, we only send the initial size
+async fn handle_terminal_size(mut channel: Sender<TerminalSize>) -> Result<(), anyhow::Error> {
+    let (width, height) = crossterm::terminal::size()?;
+    channel.send(TerminalSize { height, width }).await?;
+    let mut ctrl_c = tokio::signal::windows::ctrl_c()?;
+    ctrl_c.recv().await;
+    Ok(())
+}
+
+//Todo: allocate terminal in _container_name contianer
+async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>) -> anyhow::Result<()> {
+
+    // Here we we put the terminal in 'raw' mode to directly get the input from the user and sending it to the server and getting the result from the server to display directly.
+    // We also watch for change in your terminal size and send it to the server so that application that use the size work properly.
+    crossterm::terminal::enable_raw_mode()?;
+
+    let mut attached: AttachedProcess = pods
+    .exec(
+        &pod_name,
+        vec!["sh"],
+        &AttachParams{
+            container: container_name,
+            ..Default::default()
+        }.stdin(true).tty(true).stderr(false),
+    )
+    .await?;
+
+
+    // stdin, stdout represent the standard io on client side
+    let mut stdin = tokio_util::io::ReaderStream::new(tokio::io::stdin());
+    let mut stdout = tokio::io::stdout();
+
+    // output, input represent the standard io on qvisor side
+    let mut output = tokio_util::io::ReaderStream::new(attached.stdout().unwrap());
+    let mut input = attached.stdin().unwrap();
+
+    let term_tx = attached.terminal_size().unwrap();
+
+    let mut handle_terminal_size_handle = tokio::spawn(handle_terminal_size(term_tx));
+    
+    loop {
+        select! {
+            message = stdin.next() => {
+                match message {
+                    Some(Ok(message)) => {
+                        input.write(&message).await?;
+                    }
+                    error => {
+                        println!("got error from local stdin {:?}", error);
+                        break;
+                    },
+                }
+            },
+            message = output.next() => {
+                match message {
+                    Some(Ok(message)) => {
+                        stdout.write(&message).await?;
+                        stdout.flush().await?;
+                    },
+                    error => {
+                        println!("got error from pod stdout: {:?}, termianl allocation req is rejected", error);
+                        break
+                    },
+                }
+            },
+            result = &mut handle_terminal_size_handle => {
+                match result {
+                    Ok(_) => println!("End of terminal size stream"),
+                    Err(e) => println!("Error getting terminal size: {e:?}")
+                }
+            },
+        };
+    }
+    crossterm::terminal::disable_raw_mode()?;
+    
+    
+    Ok(())
+
+}
+
 
 
 #[tokio::main]
@@ -408,6 +516,19 @@ async fn main() -> Result<()> {
     // println!("kubectl logs");
 
     match args.command {
+        Commands::Terminal {
+            pod_name,
+            container_name
+        } => {
+
+            println!("Terminal pod_name {:?}, container_name {:?}", pod_name, container_name);
+            assert!(pod_name.is_some());
+
+            let pods: Api<Pod> = Api::default_namespaced(client);
+
+            termianl(pod_name.unwrap(), container_name, pods).await?;
+
+        },
         Commands::IssueCmd {
             pod_name,
             cmd
