@@ -1,18 +1,24 @@
-# Bubble Shell
+# Secure client
 
-Bubble shell is a learning project in the spirit of the [build-your-own-x](https://github.com/danistefanovic/build-your-own-x) list. In cases where there was a trade-off between simplicity and robustness I most often chose simplicity.
+A kubectl-like command-line tool that allows clients to interact securely with a k8s cluster.
 
-Check out the associated blog post - [Build Your Own Shell using Rust](https://www.joshmcguigan.com/blog/build-your-own-shell-rust/). 
+## Usage
+```
+./secure-client
 
-## License
+Usage: secure-client <COMMAND>
 
-Licensed under either of
+Commands:
+  terminal   Allocate a terminal inside a container This terminal is cross platform runable
+  issue-cmd  Issue cmd to a container Example: ./secure-client issue-cmd nginx "ls -t /var"
+  get        Get resource from cluster (in default namespace)
+  edit       Edit a resource
+  delete     Delete a resource
+  watch      Watches a Kubernetes Resource for changes continuously
+  apply      Apply a configuration to a resource by file name
+  logs       Get logs of the first container in Pod
+  help       Print this message or the help of the given subcommand(s)
 
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
-
-### Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Options:
+  -h, --help  Print help
+```
