@@ -1,3 +1,6 @@
+mod cryptography_utilities;
+mod error;
+
 use std::ffi::OsString;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -22,6 +25,7 @@ use kube::{
 };
 use tracing::*;
 
+use cryptography_utilities::*;
 
 /// A kubectl like secure client
 #[derive(Debug, Parser)] // requires `derive` feature
@@ -383,16 +387,18 @@ impl App {
 }
 
 
-async fn get_output(mut attached: AttachedProcess) -> Result<()> {
+async fn get_output(key_manager:KeyManager, mut attached: AttachedProcess) -> Result<()> {
     let mut stdout = tokio_util::io::ReaderStream::new(attached.stdout().unwrap());
     // let out = stdout.
     let mut stream_contents = Vec::new();
 
     while let Some(chunk) = stdout.next().await {
         stream_contents.extend_from_slice(&chunk?);
-     }
+    }
 
-    let str = String::from_utf8(stream_contents);
+    let plain_text = get_cmd_res_in_plaintext(&key_manager.key, &stream_contents).unwrap();
+
+    let str = String::from_utf8(plain_text);
     
     if str.is_err() == true {
         print!("{:?}", str);
@@ -513,6 +519,7 @@ async fn main() -> Result<()> {
 
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
+    let key_manager = KeyManager::init();
     // println!("kubectl logs");
 
     match args.command {
@@ -553,7 +560,7 @@ async fn main() -> Result<()> {
                 &AttachParams::default().stderr(false),
             )
             .await?;
-            get_output(attached).await?
+            get_output(key_manager, attached).await?
 
 
         },
