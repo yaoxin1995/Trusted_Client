@@ -5,7 +5,9 @@ use aes_gcm::{
 };
 
 use aes_gcm::aead::rand_core::RngCore;
+// use anyhow::Ok;
 use serde::*;
+
 
 
 /// Nonce: unique per message.
@@ -18,7 +20,7 @@ pub struct KeyManager {
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-struct IoFrame {
+pub struct IoFrame {
     pub nonce: Vec<u8>,
     // length: usize,
      // encrypted payload structure using aes-gcm
@@ -72,6 +74,7 @@ fn decrypt(key: &GenericArray<u8, U32>, cipher_txt: &[u8], nouce: &[u8]) -> Resu
     let plain_txt = cipher
         .decrypt(nonce, &cipher_txt[..])
         .map_err(|e| super::error::Error::Common(format!("failed to dencryp the data error {:?}", e)))?;
+
     Ok(plain_txt)
 }
     
@@ -94,39 +97,7 @@ fn prepare_encoded_io_frame(key: &GenericArray<u8, U32>, plain_text :&[u8]) -> R
 }
 
 
-fn get_decoded_payloads(key: &GenericArray<u8, U32>, encoded_payload :&Vec<u8>) -> Result<Vec<PayLoad>, super::error::Error> {
-
-    let mut payloads = Vec::new();
-    let mut frame;
-    let mut payloads_slice= encoded_payload.as_slice();
-
-    while payloads_slice.len() > 0 {
-         (frame , payloads_slice) =  postcard::take_from_bytes::<IoFrame>(payloads_slice.as_ref()).unwrap();
-        // let frame2:IoFrame = bincode::deserialize(encoded12[]).unwrap();
-        // print!("frame111111111111 : {:?}\n", frame1);
-        
-    
-        let decrypted = decrypt(key,&frame.pay_load, &frame.nonce).unwrap();
-        let payload:PayLoad = postcard::from_bytes(decrypted.as_ref()).unwrap();
-
-        payloads.push(payload);
-    
-    
-        // print!("decrypted22222222222 {:?}, PLAIN_TEXT{:?}\n", payload, PLAIN_TEXT1.as_ref());
-
-        // print!("payload111 :{:?}\n", &payload);
-        if payloads_slice.len() == 0 {
-            break;
-        }
-    }
-    // print!("payloads22222 :{:?}\n", payloads);
-    Ok(payloads)
-
-}
-
-
-
-pub fn encrypt_container_stdouterr (key: &GenericArray<u8, U32>, src: Vec<u8>) -> Vec<u8> {
+fn encrypt_container_stdouterr (key: &GenericArray<u8, U32>, src: Vec<u8>) -> Vec<u8> {
 
     let encoded_out_bound_date = prepare_encoded_io_frame(key, src.as_slice()).unwrap();
     assert!(encoded_out_bound_date.len() != 0);
@@ -155,11 +126,28 @@ fn random_bytes(slice: &mut [u8]) -> (){
 
 pub fn get_cmd_res_in_plaintext(key: &GenericArray<u8, U32>, encoded_payload :&Vec<u8>) -> Result<Vec<u8>, super::error::Error> {
 
-    let (frame, payloads_slice) =  postcard::take_from_bytes::<IoFrame>(encoded_payload.as_slice().as_ref())
+    let (frame, _) =  postcard::take_from_bytes::<IoFrame>(encoded_payload.as_slice().as_ref())
             .map_err(|e| super::error::Error::Common(format!("failed to decode the slice in order to get the IOframe,  the  error is {:?}", e)))?;
-    assert!(payloads_slice.len() == 0);
     let decrypted = decrypt(key,&frame.pay_load, &frame.nonce).unwrap();
     let payload:PayLoad = postcard::from_bytes(decrypted.as_ref()).unwrap();
 
     Ok(payload.data)
+}
+
+
+pub fn get_decoded_payloads(key: &GenericArray<u8, U32>, frames :Vec<IoFrame>) -> Result<Vec<u8>, super::error::Error> {
+
+    let mut data = Vec::new();
+    for e in frames {
+
+        let decrypted = decrypt(key, &e.pay_load, &e.nonce).unwrap();
+
+        let mut payload:PayLoad =  postcard::from_bytes(decrypted.as_ref()).unwrap();
+
+        data.append(&mut payload.data);
+
+    }
+
+    Ok(data)
+
 }

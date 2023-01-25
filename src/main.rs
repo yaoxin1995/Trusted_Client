@@ -511,6 +511,7 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
 
 }
 
+use postcard::accumulator::{CobsAccumulator, FeedResult};
 
 
 #[tokio::main]
@@ -587,18 +588,46 @@ async fn main() -> Result<()> {
                         follow: is_follow,
                         // tail_lines: Some(1),
                         container: container_name,
+                        timestamps:false,
                         // timestamps: false,
                         ..kube::api::LogParams::default()
                     }
                 ).await?.boxed();
+                // println!("1");
                 
                 while let Some(line) = logs.try_next().await? {
-                    let text;
-                    unsafe{
-                        text = std::str::from_utf8_unchecked(&line);
+
+                    // println!("2");
+                    let byte_u8 = line.to_vec();
+                    let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
+                    let mut window = byte_u8.as_slice();
+
+                    let mut  frames = Vec::<IoFrame>::new();
+
+                    'cobs: while !byte_u8.is_empty() {
+                        window = match cobs_buf.feed::<IoFrame>(&window) {
+                            FeedResult::Consumed => break 'cobs,
+                            FeedResult::OverFull(new_wind) => new_wind,
+                            FeedResult::DeserError(new_wind) => new_wind,
+                            FeedResult::Success { data, remaining } => {
+                                // Do something with `data: MyData` here.
+                
+                                // dbg!(data);
+                                frames.push(data);
+                                remaining
+                            }
+                        };
                     }
 
-                    print!("{}", text);
+                    // println!("len {:?}", frames.len());
+
+
+                    let plain_text = get_decoded_payloads(&key_manager.key, frames).unwrap();
+
+
+                    let text =  String::from_utf8_lossy(&plain_text);
+
+                    println!("{}", text);
                 }
 
             }
