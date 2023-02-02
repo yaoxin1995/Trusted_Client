@@ -396,7 +396,7 @@ async fn get_output(key_manager:KeyManager, mut attached: AttachedProcess) -> Re
         stream_contents.extend_from_slice(&chunk?);
     }
 
-    let plain_text = get_cmd_res_in_plaintext(&key_manager.key, &stream_contents).unwrap();
+    let plain_text = get_cmd_res_in_plaintext(&key_manager.key, &mut stream_contents).unwrap();
 
     let str = String::from_utf8(plain_text);
     

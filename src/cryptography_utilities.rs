@@ -124,9 +124,11 @@ fn random_bytes(slice: &mut [u8]) -> (){
 /********************public function***********************************/
 
 
-pub fn get_cmd_res_in_plaintext(key: &GenericArray<u8, U32>, encoded_payload :&Vec<u8>) -> Result<Vec<u8>, super::error::Error> {
+pub fn get_cmd_res_in_plaintext(key: &GenericArray<u8, U32>, encoded_payload : &mut Vec<u8>) -> Result<Vec<u8>, super::error::Error> {
 
-    let (frame, _) =  postcard::take_from_bytes::<IoFrame>(encoded_payload.as_slice().as_ref())
+    let body_slice: &mut [u8] = &mut encoded_payload[..];
+
+    let frame =  postcard::from_bytes_cobs::<IoFrame>(body_slice)
             .map_err(|e| super::error::Error::Common(format!("failed to decode the slice in order to get the IOframe,  the  error is {:?}", e)))?;
     let decrypted = decrypt(key,&frame.pay_load, &frame.nonce).unwrap();
     let payload:PayLoad = postcard::from_bytes(decrypted.as_ref()).unwrap();
