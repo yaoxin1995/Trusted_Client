@@ -1,6 +1,8 @@
-mod cryptography_utilities;
+mod encryption_utilities;
 mod error;
+mod hmac_untilities;
 
+// use core::slice::SlicePattern;
 use std::ffi::OsString;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -25,7 +27,10 @@ use kube::{
 };
 use tracing::*;
 
-use cryptography_utilities::*;
+use encryption_utilities::*;
+use postcard::accumulator::{CobsAccumulator, FeedResult};
+use hmac_untilities::*;
+
 
 /// A kubectl like secure client
 #[derive(Debug, Parser)] // requires `derive` feature
@@ -387,7 +392,7 @@ impl App {
 }
 
 
-async fn get_output(key_manager:KeyManager, mut attached: AttachedProcess) -> Result<()> {
+async fn get_output (key_manager:KeyManager, mut attached: AttachedProcess) -> Result<()> {
     let mut stdout = tokio_util::io::ReaderStream::new(attached.stdout().unwrap());
     // let out = stdout.
     let mut stream_contents = Vec::new();
@@ -396,7 +401,7 @@ async fn get_output(key_manager:KeyManager, mut attached: AttachedProcess) -> Re
         stream_contents.extend_from_slice(&chunk?);
     }
 
-    let plain_text = get_cmd_res_in_plaintext(&key_manager.key, &mut stream_contents).unwrap();
+    let plain_text = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents).unwrap();
 
     let str = String::from_utf8(plain_text);
     
@@ -441,7 +446,7 @@ async fn handle_terminal_size(mut channel: Sender<TerminalSize>) -> Result<(), a
 }
 
 //Todo: allocate terminal in _container_name contianer
-async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>) -> anyhow::Result<()> {
+async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>, _key_manager:KeyManager) -> anyhow::Result<()> {
 
     // Here we we put the terminal in 'raw' mode to directly get the input from the user and sending it to the server and getting the result from the server to display directly.
     // We also watch for change in your terminal size and send it to the server so that application that use the size work properly.
@@ -470,12 +475,17 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
     let term_tx = attached.terminal_size().unwrap();
 
     let mut handle_terminal_size_handle = tokio::spawn(handle_terminal_size(term_tx));
-    
+
+    // let mut cobs_stdout_buf: CobsAccumulator<256> = CobsAccumulator::new();
+    let mut i = 0;
     loop {
         select! {
             message = stdin.next() => {
                 match message {
                     Some(Ok(message)) => {
+                        // let byte_u8 = message.to_vec();
+                        // let str_text = String::from_utf8(byte_u8).unwrap();
+                        // println!("stdin {}, {}", str_text, i);
                         input.write(&message).await?;
                     }
                     error => {
@@ -485,10 +495,51 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
                 }
             },
             message = output.next() => {
+
                 match message {
                     Some(Ok(message)) => {
+                        // let byte_u8 = message.to_vec();
+
+                        // let window = byte_u8.as_slice();
+    
+                        // let frames = Vec::<IoFrame>::new();
+                        
+                        // let a = from_bytes_cobs::<IoFrame>(&mut byte_u8).unwrap();
+                        // frames.push(a);
+                        // 'cobs: while !byte_u8.is_empty() {
+                        //     window = match cobs_stdout_buf.feed::<IoFrame>(&window) {
+                        //         FeedResult::Consumed => break 'cobs,
+                        //         FeedResult::OverFull(new_wind) => new_wind,
+                        //         FeedResult::DeserError(new_wind) => new_wind,
+                        //         FeedResult::Success { data, remaining } => {
+                        //             // Do something with `data: MyData` here.
+                    
+                        //             // dbg!(data);
+                        //             frames.push(data);
+                        //             remaining
+                        //         }
+                        //     };
+                        // }
+
+
+                        // stdout.write(&message).await?;
+                        // stdout.flush().await?;
+                        // if frames.len() == 0 {
+                        //     continue;
+                        // }
+                        // assert_eq!(frames.len(),  1);
+                        // println!("len {:?}", frames.len());
+                        // let plain_text = get_decoded_payloads(&key_manager.key, frames).unwrap();
+
+                        // let str_text = String::from_utf8(byte_u8).unwrap();
+                        // let str_trimed = str_text.trim();
+                        // let str_trimed_byte = str_trimed.as_bytes();
+
+                        // print!("stdout {:?}, {}", str_text, i);
                         stdout.write(&message).await?;
                         stdout.flush().await?;
+
+                        i = i +1;
                     },
                     error => {
                         println!("got error from pod stdout: {:?}, termianl allocation req is rejected", error);
@@ -511,7 +562,10 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
 
 }
 
-use postcard::accumulator::{CobsAccumulator, FeedResult};
+
+
+
+
 
 
 #[tokio::main]
@@ -521,7 +575,6 @@ async fn main() -> Result<()> {
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
     let key_manager = KeyManager::init();
-    // println!("kubectl logs");
 
     match args.command {
         Commands::Terminal {
@@ -534,7 +587,7 @@ async fn main() -> Result<()> {
 
             let pods: Api<Pod> = Api::default_namespaced(client);
 
-            termianl(pod_name.unwrap(), container_name, pods).await?;
+            termianl(pod_name.unwrap(), container_name, pods, key_manager).await?;
 
         },
         Commands::IssueCmd {
@@ -547,17 +600,21 @@ async fn main() -> Result<()> {
             assert!(cmd.is_some());
 
             let cmd = cmd.unwrap();
+        
+            let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key);
+            info!("privileged req {:?}", privileged_req);
 
-            let split = cmd.split_whitespace();
-            let vec = split.collect::<Vec<&str>>();
+            let mut test_verify_privileged_exec_cmd = privileged_req.clone();
+            let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
+            info!("11111111111111111");
+            info!("verification_result {:?}", verification_result);
 
-            println!("{:?}", vec);
             let pods: Api<Pod> = Api::default_namespaced(client);
 
             let attached = pods
             .exec(
                 &pod_name.unwrap(),
-                vec,
+                privileged_req,
                 &AttachParams::default().stderr(false),
             )
             .await?;
@@ -594,12 +651,17 @@ async fn main() -> Result<()> {
                     }
                 ).await?.boxed();
                 // println!("1");
+
+                let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
                 
                 while let Some(line) = logs.try_next().await? {
 
                     // println!("2");
                     let byte_u8 = line.to_vec();
-                    let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
+                    if byte_u8.len() == 0 {
+                        break;
+                    }
+
                     let mut window = byte_u8.as_slice();
 
                     let mut  frames = Vec::<IoFrame>::new();
@@ -622,7 +684,7 @@ async fn main() -> Result<()> {
                     // println!("len {:?}", frames.len());
 
 
-                    let plain_text = get_decoded_payloads(&key_manager.key, frames).unwrap();
+                    let plain_text = get_decoded_payloads(&key_manager.encryption_key, frames).unwrap();
 
 
                     let text =  String::from_utf8_lossy(&plain_text);
