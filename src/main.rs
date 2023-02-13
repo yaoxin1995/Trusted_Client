@@ -446,16 +446,19 @@ async fn handle_terminal_size(mut channel: Sender<TerminalSize>) -> Result<(), a
 }
 
 //Todo: allocate terminal in _container_name contianer
-async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>, _key_manager:KeyManager) -> anyhow::Result<()> {
+async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>, key_manager:KeyManager) -> anyhow::Result<()> {
 
     // Here we we put the terminal in 'raw' mode to directly get the input from the user and sending it to the server and getting the result from the server to display directly.
     // We also watch for change in your terminal size and send it to the server so that application that use the size work properly.
     crossterm::terminal::enable_raw_mode()?;
 
+    let cmd = "sh".to_string();
+    let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key);
+
     let mut attached: AttachedProcess = pods
     .exec(
         &pod_name,
-        vec!["sh"],
+        privileged_req,
         &AttachParams{
             container: container_name,
             ..Default::default()

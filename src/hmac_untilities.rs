@@ -18,7 +18,9 @@ const PRIVILEGE_KEYWORD: &str = "Privileged ";
 pub fn generate_hmac (key_slice : &[u8], message: &String) -> String {
 
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(key_slice).expect("HMAC can take key of any size");
+    //let mut mac = HmacSha256::new_from_slice(key_slice).expect("HMAC can take key of any size");
+    
+    let mut mac : HmacSha256 = hmac::Mac::new_from_slice(key_slice).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
     let result = mac.finalize();
     let code_bytes = result.into_bytes();
@@ -53,12 +55,12 @@ pub fn verify_mac (key_slice : &[u8], message: &String, base64_encoded_code: &St
  */
 pub fn prepare_priviled_exec_cmd(cmd: String, key_slice: &[u8], key: &GenericArray<u8, U32>) -> Vec<String> {
 
-    println!("cmd before {:?}", cmd);
+    // println!("cmd before {:?}", cmd);
 
     let mut owned_privilege_keyword = PRIVILEGE_KEYWORD.to_owned();
     owned_privilege_keyword.push_str(&cmd);
 
-    println!("cmd after {:?}", owned_privilege_keyword);
+    // println!("cmd after {:?}", owned_privilege_keyword);
 
     let hmac = generate_hmac(key_slice,  &owned_privilege_keyword);
 
@@ -72,7 +74,7 @@ pub fn prepare_priviled_exec_cmd(cmd: String, key_slice: &[u8], key: &GenericArr
     privileged_cmd.push(base64_encrypted_cmd);
     privileged_cmd.push(base64_encrypted_nonce);
 
-    println!("privileged cmd {:?}", privileged_cmd);
+    // println!("privileged cmd {:?}", privileged_cmd);
 
     privileged_cmd
 }
