@@ -49,12 +49,6 @@ impl From<serde_json::Error> for SerializeError {
     }
 }
 
-pub fn to_writer<W: io::Write, T: serde::Serialize>(
-    obj: &T,
-    mut writer: W,
-) -> Result<(), SerializeError> {
-    Ok(serde_json::to_writer(&mut writer, &obj)?)
-}
 
 // pub fn from_reader<R: io::Read, T: serde::Deserialize>(reader: R)
 //                                           -> Result<T, SerializeError> {
@@ -69,14 +63,4 @@ pub fn serialize<T: serde::Serialize>(obj: &T, path: &str) -> Result<(), Seriali
 pub fn deserialize<T: for<'a> serde::Deserialize<'a>>(path: &str) -> Result<T, SerializeError> {
     let file = File::open(path)?;
     Ok(serde_json::from_reader(&file)?)
-}
-
-pub fn to_string<T: serde::Serialize>(obj: &T) -> Result<String, SerializeError> {
-    Ok(serde_json::to_string(&obj)?)
-}
-
-pub fn from_string<T: for<'a> serde::Deserialize<'a>>(str: &str) -> Result<T, SerializeError> {
-    let v: T = serde_json::from_str(str)?;
-
-    Ok(v)
 }

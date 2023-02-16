@@ -16,6 +16,13 @@ const ENCRYPTED_MESSAGE_INDEX: usize = 2;
 const NONCE_INDEX: usize = 3;
 const PRIVILEGE_KEYWORD: &str = "Privileged ";
 
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct Session {
+    session_id: u32,
+    pub counter: u32,
+}
+
 pub fn generate_hmac (key_slice : &[u8], message: &String) -> String {
 
     type HmacSha256 = Hmac<Sha256>;
@@ -48,24 +55,33 @@ pub fn verify_mac (key_slice : &[u8], message: &String, base64_encoded_code: &St
 }
 
 /**
- * Privilege request format:
+ * Privilege request format:                  
  * *********************** * *********************** ************************
- *         Privileged     /    hmac(Privileged|cmd|args)     /  encrypted cmd + args / tag
+ *         Privileged / hmac(Privileged|Session_id|Conter|cmd|args, privilegd_user_key) /  (Session_id + Conter + cmd + args) / nonce
  * ************************ ************************************************
- *                        
  */
-pub fn prepare_priviled_exec_cmd(cmd: String, key_slice: &[u8], key: &GenericArray<u8, U32>) -> Vec<String> {
+pub fn prepare_priviled_exec_cmd(cmd: String, key_slice: &[u8], key: &GenericArray<u8, U32>, s: &mut Session) -> Vec<String> {
 
     // println!("cmd before {:?}", cmd);
 
     let mut owned_privilege_keyword = PRIVILEGE_KEYWORD.to_owned();
+    owned_privilege_keyword.push_str(&s.session_id.to_string());
+    owned_privilege_keyword.push_str(&" ".to_string());
+    owned_privilege_keyword.push_str(&s.counter.to_string());
+    owned_privilege_keyword.push_str(&" ".to_string());
     owned_privilege_keyword.push_str(&cmd);
 
     // println!("cmd after {:?}", owned_privilege_keyword);
 
     let hmac = generate_hmac(key_slice,  &owned_privilege_keyword);
 
-    let (encrypted_cmd, nonce) = encrypt(key, cmd.as_bytes()).unwrap();
+    let mut privileged_cmd_payload = s.session_id.to_string();
+    privileged_cmd_payload.push_str(&" ".to_string());
+    privileged_cmd_payload.push_str(&s.counter.to_string());
+    privileged_cmd_payload.push_str(&" ".to_string());
+    privileged_cmd_payload.push_str(&cmd.to_string());
+
+    let (encrypted_cmd, nonce) = encrypt(key, privileged_cmd_payload.as_bytes()).unwrap();
     let base64_encrypted_cmd = Base64::encode_string(&encrypted_cmd);
     let base64_encrypted_nonce = Base64::encode_string(&nonce);
 
@@ -130,6 +146,7 @@ pub fn verify_privileged_exec_cmd(privileged_cmd: &mut Vec<String>, key_slice: &
 
 
 /**
+ * Login phase
  * Step 1: Secure client sends "Privilege login request":
  * *********************** * *********************** ************************
  *         Privileged /  hmac(Login|random_number, privilegd_user_key) /    (Keyword "Login" + random_number) encrypted by privilegd_user_key / nonce
@@ -143,13 +160,14 @@ pub fn verify_privileged_exec_cmd(privileged_cmd: &mut Vec<String>, key_slice: &
  *         (Session_id + Conter +  Session expire time) encrypted by privilegd_user_key / nonce
  * ************************ ************************************************ 
  * 
+ * Request resource phase:
  * 
- * Step 3: Secure client sends exec request with session metadata attached:
+ * Step 1: Secure client sends exec request with session metadata attached:
  * *********************** * *********************** ************************
  *         Privileged / hmac(Session_id|Conter|Session_expire_time|cmd|args, privilegd_user_key) /  (Session_id + Session_expire_time + Conter + cmd + args) / nonce
  * ************************ ************************************************
  * 
- * Step 4: qkernel return the exec result to secure client over stdout of qkernel exec process:
+ * Step 2: qkernel return the exec result to secure client over stdout of qkernel exec process:
  * *********************** * *********************** ************************
  *        (exec result + session is expered) encrypted by privilegd_user_key / nonce
  * ************************ ************************************************                          

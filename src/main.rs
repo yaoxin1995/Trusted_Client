@@ -3,6 +3,7 @@ mod error;
 mod hmac_untilities;
 mod serialize;
 
+
 // use core::slice::SlicePattern;
 use std::ffi::OsString;
 
@@ -38,8 +39,6 @@ use std::fs;
 
 #[macro_use]
 extern crate serde_derive;
-
-
 
 /// A kubectl like secure client
 #[derive(Debug, Parser)] // requires `derive` feature
@@ -455,14 +454,14 @@ async fn handle_terminal_size(mut channel: Sender<TerminalSize>) -> Result<(), a
 }
 
 //Todo: allocate terminal in _container_name contianer
-async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>, key_manager:KeyManager) -> anyhow::Result<()> {
+async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<Pod>, key_manager:KeyManager, s:&mut Session) -> anyhow::Result<()> {
 
     // Here we we put the terminal in 'raw' mode to directly get the input from the user and sending it to the server and getting the result from the server to display directly.
     // We also watch for change in your terminal size and send it to the server so that application that use the size work properly.
     crossterm::terminal::enable_raw_mode()?;
 
     let cmd = "sh".to_string();
-    let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key);
+    let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key, s);
 
     let mut attached: AttachedProcess = pods
     .exec(
@@ -475,7 +474,7 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
     )
     .await?;
 
-
+    s.increas_counter();
     // stdin, stdout represent the standard io on client side
     let mut stdin = tokio_util::io::ReaderStream::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
@@ -576,14 +575,13 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
 
 
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct Session {
-    session_id: u32,
-    counter: u32,
-}
+
+
+
+
+
 
 const SESSION_FILE_PATH: &str = "session.json";
-
 impl Session {
     pub fn load() -> Result<Session, serialize::SerializeError> {
         serialize::deserialize(SESSION_FILE_PATH)
@@ -593,12 +591,18 @@ impl Session {
         serialize::serialize(self, SESSION_FILE_PATH)
     }
 
+    pub fn increas_counter(&mut self) -> () {
+        self.counter = self.counter + 1;
+        self.save().unwrap();
+    }
+
     pub fn delete(&self) -> () {
         if !fs::metadata(SESSION_FILE_PATH).is_ok() {
             return;
         }
         fs::remove_file("me.txt").expect("File delete failed");
     }
+
 
     pub async fn login_to_qkernel(key_manager: &KeyManager, pod_name: &String, pods: &Api<Pod>) ->  Result<Session> {
 
@@ -621,20 +625,18 @@ impl Session {
     }
 }
 
+
 async fn parse_login_req_output (key_manager: &KeyManager, mut attached: AttachedProcess) -> Result<Session> {
     let mut stdout = tokio_util::io::ReaderStream::new(attached.stdout().unwrap());
     // let out = stdout.
     let mut stream_contents = Vec::new();
 
-    println!("parse_login_req_output 1111");
     while let Some(chunk) = stdout.next().await {
         stream_contents.extend_from_slice(&chunk?);
     }
 
-    println!("parse_login_req_output 2222");
     let mut plain_text = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents).unwrap();
 
-    println!("parse_login_req_output 3333");
     let session =  postcard::from_bytes::<Session>(&mut plain_text[..])?;
 
     println!("got session {:?}", session);
@@ -670,9 +672,21 @@ async fn main() -> Result<()> {
             println!("Terminal pod_name {:?}, container_name {:?}", pod_name, container_name);
             assert!(pod_name.is_some());
 
-            let pods: Api<Pod> = Api::default_namespaced(client);
+            let pod_name = pod_name.unwrap();
 
-            termianl(pod_name.unwrap(), container_name, pods, key_manager).await?;
+            let pods: Api<Pod> = Api::default_namespaced(client);
+            let mut s = match Session::load() {
+                Ok(s) => s,
+                Err(_) => {
+                    println!("session dosen't exist, let's get one from qkernel");
+                    let s = Session::login_to_qkernel(&key_manager, &pod_name, &pods).await.unwrap();
+                    s.save().unwrap();
+                    s
+                }
+            };
+            println!("got session : {:?}", s);
+
+            termianl(pod_name, container_name, pods, key_manager, &mut s).await?;
 
         },
         Commands::IssueCmd {
@@ -688,7 +702,7 @@ async fn main() -> Result<()> {
             let pod_name = pod_name.unwrap();
             let pods: Api<Pod> = Api::default_namespaced(client);
 
-            let s = match Session::load() {
+            let mut s = match Session::load() {
                 Ok(s) => s,
                 Err(_) => {
                     println!("session dosen't exist, let's get one from qkernel");
@@ -699,13 +713,11 @@ async fn main() -> Result<()> {
             };
             println!("got session : {:?}", s);
 
-
-
-            let mut login_req = prepare_secure_vm_login_req (&key_manager.key_slice, &key_manager.encryption_key);
-            let login_cmd = verify_privileged_exec_cmd(&mut login_req, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
-            println!("login_cmd in qkenel req {:?}", login_cmd);
+            // let mut login_req = prepare_secure_vm_login_req (&key_manager.key_slice, &key_manager.encryption_key);
+            // let login_cmd = verify_privileged_exec_cmd(&mut login_req, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
+            // println!("login_cmd in qkenel req {:?}", login_cmd);
         
-            let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key);
+            let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key, &mut s);
             info!("privileged req {:?}", privileged_req);
 
             let mut test_verify_privileged_exec_cmd = privileged_req.clone();
@@ -719,9 +731,9 @@ async fn main() -> Result<()> {
                 &AttachParams::default().stderr(false),
             )
             .await?;
-            get_output(key_manager, attached).await?
 
-
+            s.increas_counter();
+            get_output(key_manager, attached).await?;
         },
         Commands::Logs {
             pod_name,
