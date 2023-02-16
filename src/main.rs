@@ -1,6 +1,7 @@
 mod encryption_utilities;
 mod error;
 mod hmac_untilities;
+mod serialize;
 
 // use core::slice::SlicePattern;
 use std::ffi::OsString;
@@ -30,6 +31,14 @@ use tracing::*;
 use encryption_utilities::*;
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use hmac_untilities::*;
+
+use serde;
+use serde_json;
+use std::fs;
+
+#[macro_use]
+extern crate serde_derive;
+
 
 
 /// A kubectl like secure client
@@ -567,13 +576,86 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
 
 
 
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct Session {
+    session_id: u32,
+    counter: u32,
+}
 
+const SESSION_FILE_PATH: &str = "session.json";
 
+impl Session {
+    pub fn load() -> Result<Session, serialize::SerializeError> {
+        serialize::deserialize(SESSION_FILE_PATH)
+    }
+
+    pub fn save(&self) -> Result<(), serialize::SerializeError> {
+        serialize::serialize(self, SESSION_FILE_PATH)
+    }
+
+    pub fn delete(&self) -> () {
+        if !fs::metadata(SESSION_FILE_PATH).is_ok() {
+            return;
+        }
+        fs::remove_file("me.txt").expect("File delete failed");
+    }
+
+    pub async fn login_to_qkernel(key_manager: &KeyManager, pod_name: &String, pods: &Api<Pod>) ->  Result<Session> {
+
+        let get_session_req = prepare_secure_vm_login_req(&key_manager.key_slice, &key_manager.encryption_key);
+
+        println!("login_to_qkernel exec before");
+        let attached = pods
+        .exec(
+            pod_name,
+            get_session_req,
+            &AttachParams::default().stderr(false),
+        )
+        .await?;
+
+    println!("login_to_qkernel exec after");
+
+    let s = parse_login_req_output(key_manager, attached).await?;
+
+    Ok(s)
+    }
+}
+
+async fn parse_login_req_output (key_manager: &KeyManager, mut attached: AttachedProcess) -> Result<Session> {
+    let mut stdout = tokio_util::io::ReaderStream::new(attached.stdout().unwrap());
+    // let out = stdout.
+    let mut stream_contents = Vec::new();
+
+    println!("parse_login_req_output 1111");
+    while let Some(chunk) = stdout.next().await {
+        stream_contents.extend_from_slice(&chunk?);
+    }
+
+    println!("parse_login_req_output 2222");
+    let mut plain_text = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents).unwrap();
+
+    println!("parse_login_req_output 3333");
+    let session =  postcard::from_bytes::<Session>(&mut plain_text[..])?;
+
+    println!("got session {:?}", session);
+    
+    Ok(session)
+}
 
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
+
+    // let s = Session {
+    //     session_id : 1,
+    //     counter: 2,
+    //     session_expire_time: "asd".to_string(),
+    // };
+
+    // s.save();
+
+
 
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
@@ -603,20 +685,36 @@ async fn main() -> Result<()> {
             assert!(cmd.is_some());
 
             let cmd = cmd.unwrap();
+            let pod_name = pod_name.unwrap();
+            let pods: Api<Pod> = Api::default_namespaced(client);
+
+            let s = match Session::load() {
+                Ok(s) => s,
+                Err(_) => {
+                    println!("session dosen't exist, let's get one from qkernel");
+                    let s = Session::login_to_qkernel(&key_manager, &pod_name, &pods).await.unwrap();
+                    s.save().unwrap();
+                    s
+                }
+            };
+            println!("got session : {:?}", s);
+
+
+
+            let mut login_req = prepare_secure_vm_login_req (&key_manager.key_slice, &key_manager.encryption_key);
+            let login_cmd = verify_privileged_exec_cmd(&mut login_req, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
+            println!("login_cmd in qkenel req {:?}", login_cmd);
         
             let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key);
             info!("privileged req {:?}", privileged_req);
 
             let mut test_verify_privileged_exec_cmd = privileged_req.clone();
             let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
-            info!("11111111111111111");
             info!("verification_result {:?}", verification_result);
-
-            let pods: Api<Pod> = Api::default_namespaced(client);
 
             let attached = pods
             .exec(
-                &pod_name.unwrap(),
+                &pod_name,
                 privileged_req,
                 &AttachParams::default().stderr(false),
             )

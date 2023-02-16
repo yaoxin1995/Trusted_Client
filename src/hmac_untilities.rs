@@ -7,6 +7,7 @@ use super::encryption_utilities::*;
 use aes_gcm::{
     aead::{generic_array::{GenericArray, typenum::U32}}
 };
+use rand::Rng;
 
 
 const PRIVILEGE_KEYWORD_INDEX: usize = 0;
@@ -107,6 +108,8 @@ pub fn verify_privileged_exec_cmd(privileged_cmd: &mut Vec<String>, key_slice: &
     let cmd_string = String::from_utf8(decrypted_cmd)
     .map_err(|e| super::error::Error::Common(format!("failed to turn the cmd from bytes to string, the error is {:?}, privileged_cmd verification failed", e)))?;
 
+    println!("verify_privileged_exec_cmd cmd{:?}", cmd_string);
+
     let mut hmac_message = privileged_cmd.get(PRIVILEGE_KEYWORD_INDEX).unwrap().clone();
     hmac_message.push_str(&cmd_string);
 
@@ -123,3 +126,69 @@ pub fn verify_privileged_exec_cmd(privileged_cmd: &mut Vec<String>, key_slice: &
     println!("verification result  {:?}", cmd_list);
     return Ok(cmd_list);
 }
+
+
+
+/**
+ * Step 1: Secure client sends "Privilege login request":
+ * *********************** * *********************** ************************
+ *         Privileged /  hmac(Login|random_number, privilegd_user_key) /    (Keyword "Login" + random_number) encrypted by privilegd_user_key / nonce
+ * ************************ ************************************************
+ * Note:
+ * We use random numbers to avoid known-plaintext attacks in the case that the key space is too small 
+ * https://crypto.stackexchange.com/questions/8500/with-hmac-can-an-attacker-recover-the-key-given-many-known-plaintext-tag-pairs
+ * 
+ * Step 2: qkernel returns session metadata via stdout of qkernel exec process:
+ * *********************** * *********************** ************************
+ *         (Session_id + Conter +  Session expire time) encrypted by privilegd_user_key / nonce
+ * ************************ ************************************************ 
+ * 
+ * 
+ * Step 3: Secure client sends exec request with session metadata attached:
+ * *********************** * *********************** ************************
+ *         Privileged / hmac(Session_id|Conter|Session_expire_time|cmd|args, privilegd_user_key) /  (Session_id + Session_expire_time + Conter + cmd + args) / nonce
+ * ************************ ************************************************
+ * 
+ * Step 4: qkernel return the exec result to secure client over stdout of qkernel exec process:
+ * *********************** * *********************** ************************
+ *        (exec result + session is expered) encrypted by privilegd_user_key / nonce
+ * ************************ ************************************************                          
+ */
+pub fn prepare_secure_vm_login_req(key_slice: &[u8], key: &GenericArray<u8, U32>) -> Vec<String> {
+    // println!("cmd before {:?}", cmd);
+
+    const LOGIN_KEYWORD: &str = "Login ";
+
+    let mut privileged_login_req_payload = LOGIN_KEYWORD.to_owned();
+
+    let rnd : i64= rand::thread_rng().gen();
+    let rnd_string = rnd.to_string();
+    privileged_login_req_payload.push_str(&rnd_string);
+
+
+
+    let mut hmac_input = PRIVILEGE_KEYWORD.to_owned();
+    hmac_input.push_str(&privileged_login_req_payload);
+    println!("privileged_login_req_payload hmac message {:?}", hmac_input);
+
+
+    let hmac = generate_hmac(key_slice,  &hmac_input);
+
+
+    let (encrypted_privileged_login_req_payload, nonce) = encrypt(key, privileged_login_req_payload.as_bytes()).unwrap();
+    let base64_encrypted_privileged_login_req_payload = Base64::encode_string(&encrypted_privileged_login_req_payload);
+    let base64_encrypted_nonce = Base64::encode_string(&nonce);
+
+    let mut privileged_login_req = Vec::new();
+    privileged_login_req.push(PRIVILEGE_KEYWORD.to_owned());
+    privileged_login_req.push(hmac);
+    privileged_login_req.push(base64_encrypted_privileged_login_req_payload);
+    privileged_login_req.push(base64_encrypted_nonce);
+
+    // println!("privileged cmd {:?}", privileged_cmd);
+
+    privileged_login_req
+}
+
+
+
