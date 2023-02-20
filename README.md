@@ -2,6 +2,11 @@
 
 A kubectl-like command-line tool that allows clients to interact securely with a k8s cluster.
 
+## Build
+```
+RUSTFLAGS='-L /usr/local/lib64/' cargo build
+```
+
 ## Usage
 ```
 ./secure-client
