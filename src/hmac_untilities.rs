@@ -210,3 +210,48 @@ pub fn prepare_secure_vm_login_req(key_slice: &[u8], key: &GenericArray<u8, U32>
 
 
 
+
+// /**
+//  * Privilege request format:                  
+//  * *********************** * *********************** ************************
+//  *         Privileged / hmac(Privileged|Session_id|Conter|cmd|args, privilegd_user_key) /  (Session_id + Conter + cmd + args) / nonce
+//  * ************************ ************************************************
+//  */
+// pub fn prepare_secret_update_req(policy: String, key_slice: &[u8], key: &GenericArray<u8, U32>, s: &mut Session) -> Vec<String> {
+
+//     // println!("cmd before {:?}", cmd);
+//     const POLICY_UPDATE_KEYWORD: &str = "PolicyUpdate ";
+
+//     let mut owned_privilege_keyword = PRIVILEGE_KEYWORD.to_owned();
+//     owned_privilege_keyword.push_str(&s.session_id.to_string());
+//     owned_privilege_keyword.push_str(&" ".to_string());
+//     owned_privilege_keyword.push_str(&s.counter.to_string());
+//     owned_privilege_keyword.push_str(&" ".to_string());
+//     owned_privilege_keyword.push_str(POLICY_UPDATE_KEYWORD);
+//     owned_privilege_keyword.push_str(&policy);
+
+
+//     // println!("cmd after {:?}", owned_privilege_keyword);
+
+//     let hmac = generate_hmac(key_slice,  &owned_privilege_keyword);
+
+//     let mut privileged_cmd_payload = s.session_id.to_string();
+//     privileged_cmd_payload.push_str(&" ".to_string());
+//     privileged_cmd_payload.push_str(&s.counter.to_string());
+//     privileged_cmd_payload.push_str(&" ".to_string());
+//     privileged_cmd_payload.push_str(&cmd.to_string());
+
+//     let (encrypted_cmd, nonce) = encrypt(key, privileged_cmd_payload.as_bytes()).unwrap();
+//     let base64_encrypted_cmd = Base64::encode_string(&encrypted_cmd);
+//     let base64_encrypted_nonce = Base64::encode_string(&nonce);
+
+//     let mut privileged_cmd = Vec::new();
+//     privileged_cmd.push(PRIVILEGE_KEYWORD.to_owned());
+//     privileged_cmd.push(hmac);
+//     privileged_cmd.push(base64_encrypted_cmd);
+//     privileged_cmd.push(base64_encrypted_nonce);
+
+//     // println!("privileged cmd {:?}", privileged_cmd);
+
+//     privileged_cmd
+// }

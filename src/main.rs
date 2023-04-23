@@ -2,13 +2,13 @@ mod encryption_utilities;
 mod error;
 mod hmac_untilities;
 mod serialize;
+mod kbs_policy;
 
 
 // use core::slice::SlicePattern;
 use std::ffi::OsString;
-
 use clap::{Parser, Subcommand, ValueEnum};
-
+use std::env;
 use anyhow::{bail, Context, Result};
 use futures::{StreamExt, TryStreamExt, channel::mpsc::Sender, SinkExt};
 use k8s_openapi::{
@@ -16,7 +16,7 @@ use k8s_openapi::{
     chrono::{Duration, Utc},
     api::core::v1::Pod,
 };
-
+use base64ct::{Base64, Encoding};
 use kube::{
     api::{Api, DynamicObject, ListParams, Patch, PatchParams, ResourceExt, AttachedProcess, AttachParams, TerminalSize},
     core::GroupVersionKind,
@@ -149,6 +149,15 @@ enum Commands {
         pod_name: Option<String>,
         /// Container name in Pod, by default, the log return the log of the first container in Pod
         container_name: Option<String>,
+    },
+    /// Update Exec policy using secure channel
+    #[command(arg_required_else_help = true)]
+    PolicyUpdate{
+        /// Pod name
+        pod_name: Option<String>,
+        /// Path of policy.json,  the default path is current dir
+        policy_path: Option<String>,
+
     },
     #[command(external_subcommand)]
     External(Vec<OsString>),
@@ -414,10 +423,10 @@ async fn get_output (key_manager:KeyManager, mut attached: AttachedProcess) -> R
     let str = String::from_utf8(plain_text);
     
     if str.is_err() == true {
-        print!("{:?}", str);
+        println!("{:?}", str);
 
     }else {
-        print!("{}", str.unwrap());
+        println!("{}", str.unwrap());
     }
     Ok(())
 }
@@ -574,13 +583,6 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
 }
 
 
-
-
-
-
-
-
-
 const SESSION_FILE_PATH: &str = "session.json";
 impl Session {
     pub fn load() -> Result<Session, serialize::SerializeError> {
@@ -617,11 +619,11 @@ impl Session {
         )
         .await?;
 
-    println!("login_to_qkernel exec after");
+        println!("login_to_qkernel exec after");
 
-    let s = parse_login_req_output(key_manager, attached).await?;
+        let s = parse_login_req_output(key_manager, attached).await?;
 
-    Ok(s)
+        Ok(s)
     }
 }
 
@@ -649,21 +651,67 @@ async fn parse_login_req_output (key_manager: &KeyManager, mut attached: Attache
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
-    // let s = Session {
-    //     session_id : 1,
-    //     counter: 2,
-    //     session_expire_time: "asd".to_string(),
-    // };
-
-    // s.save();
-
-
-
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
     let key_manager = KeyManager::init();
 
     match args.command {
+        Commands::PolicyUpdate {
+            pod_name,
+            policy_path
+        } => {
+            const POLICYUPDATE_KEYWORD: &str = "PolicyUpdate ";
+
+            println!("PolicyUpdate pod_name {:?}, policy_path {:?}", pod_name, policy_path);
+            assert!(pod_name.is_some());
+
+            let pod_name = pod_name.unwrap();
+            let pods: Api<Pod> = Api::default_namespaced(client);
+
+            let policy_dir = if policy_path.is_some() {
+                policy_path.unwrap()
+            } else {
+                let current_dir = env::current_dir().unwrap();
+                
+                let policy_path = format!("{}/policy.json", current_dir.to_str().unwrap());
+                policy_path
+            };
+            let mut policy = kbs_policy::KbsPolicy::default();
+            policy.load(&policy_dir).unwrap();
+            let policy_in_json_string = serde_json::to_string(&policy).unwrap();
+
+            let policy_in_base64_string = Base64::encode_string(&policy_in_json_string.as_bytes());
+            let mut update_cmd = POLICYUPDATE_KEYWORD.to_owned();
+            update_cmd.push_str(&policy_in_base64_string);
+
+            println!("update_cmd {:?}", update_cmd);
+
+            let mut s = match Session::load() {
+                Ok(s) => s,
+                Err(_) => {
+                    println!("PolicyUpdate session dosen't exist, let's get one from qkernel");
+                    let s = Session::login_to_qkernel(&key_manager, &pod_name, &pods).await.unwrap();
+                    s.save().unwrap();
+                    s
+                }
+            };
+
+            let privileged_req = prepare_priviled_exec_cmd(update_cmd, &key_manager.key_slice, &key_manager.encryption_key, &mut s);
+            info!("PolicyUpdate privileged req {:?}", privileged_req);
+
+            let mut test_verify_privileged_exec_cmd = privileged_req.clone();
+            let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
+            info!("PolicyUpdate verification_result {:?}", verification_result);
+
+            let attached = pods.exec(
+                &pod_name,
+                privileged_req,
+                &AttachParams::default().stderr(false),
+            ).await?;
+
+            s.increas_counter();
+            get_output(key_manager, attached).await?;
+        }
         Commands::Terminal {
             pod_name,
             container_name
