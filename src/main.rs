@@ -838,7 +838,7 @@ async fn main() -> Result<()> {
                 ).await?.boxed();
                 // println!("1");
 
-                let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
+                let mut cobs_buf: CobsAccumulator<4096> = CobsAccumulator::new();
                 
                 while let Some(line) = logs.try_next().await? {
 
