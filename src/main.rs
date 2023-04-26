@@ -145,7 +145,8 @@ enum Commands {
         resource: Option<String>,
         name: Option<String>,
     },
-    /// Get logs of the first container in Pod
+    /// Get logs of the first container in Pod, 
+    /// Logs CMD works only if the container log is encrypted
     #[command(arg_required_else_help = true)]
     Logs{
         /// Follow the log stream of the pod. Defaults to `false`.
@@ -426,8 +427,8 @@ async fn get_output (key_manager:KeyManager, mut attached: AttachedProcess) -> R
 
     let res = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents);
     if res.is_err() {
-        println!("Get error from the enclave!, you either don't have permission to execute the cmd or the seesion file is obsolte, check the policy file or delete session file, then try again");
-        println!("You either do not have permission to execute cmd, or the session file is outdated, check the policy file or delete session file, then try again");
+        println!("Get error from the enclave, Or the cmd the secrure client issued returns nothing");
+        println!("If it is an error, you either don't have permission to execute the cmd or the seesion file is obsolte, check the policy file or delete session file, then try again");
         println!("Check the policy file or delete session file, then try again");
         return Ok(());
     }
