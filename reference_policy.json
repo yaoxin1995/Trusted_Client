@@ -20,8 +20,14 @@
             "allowed_dir": ["/var/log"]
         }
     },
+
     "privileged_user_key_slice": "a very simple secret key to use!",
 
+    "qkernel_log_config": {
+        "enable": true,
+        "allowed_max_log_level": "Debug"
+    },
+    
     "syscall_interceptor_config": {
         "enable": false,
         "mode":  "Global",

@@ -564,6 +564,23 @@ pub struct BackEndSyscallInterceptorConfig {
     pub syscalls: Vec<u64>
 }
 
+#[derive(Default, Clone, Copy, Debug, PartialOrd, Ord, Eq, PartialEq, Serialize, Deserialize)]
+pub enum QkernelDebugLevel {
+    #[default]
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+
+#[derive(Default, Clone, Copy, Debug, PartialOrd, Ord, Eq, PartialEq, Serialize, Deserialize)]
+pub struct QlogPolicy {
+    pub enable: bool,
+    pub allowed_max_log_level: QkernelDebugLevel
+}
 
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -572,6 +589,7 @@ pub struct FrontEndKbsPolicy {
     pub privileged_user_config: PrivilegedUserConfig,
     pub unprivileged_user_config:  UnprivilegedUserConfig,
     pub privileged_user_key_slice: String,
+    pub qkernel_log_config: QlogPolicy,
     pub syscall_interceptor_config: FrontEndSyscallInterceptorConfig,
 }
 
@@ -582,6 +600,7 @@ pub struct BackEndKbsPolicy {
     pub privileged_user_config: PrivilegedUserConfig,
     pub unprivileged_user_config:  UnprivilegedUserConfig,
     pub privileged_user_key_slice: String,
+    pub qkernel_log_config: QlogPolicy,
     pub syscall_interceptor_config: BackEndSyscallInterceptorConfig,
 }
 
@@ -625,7 +644,8 @@ impl FrontEndKbsPolicy {
             privileged_user_config: self.privileged_user_config.clone(),
             unprivileged_user_config: self.unprivileged_user_config.clone(),
             privileged_user_key_slice: self.privileged_user_key_slice.clone(),
-            syscall_interceptor_config : backend_syscall_config
+            syscall_interceptor_config : backend_syscall_config,
+            qkernel_log_config: self.qkernel_log_config,
         };
 
         super::serialize::serialize(&backend_policy, BACKEND_POLICY_FILE_PATH).unwrap();
