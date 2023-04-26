@@ -4,7 +4,7 @@ mod hmac_untilities;
 mod serialize;
 mod kbs_policy;
 
-
+extern crate strum;
 // use core::slice::SlicePattern;
 use std::ffi::OsString;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -51,6 +51,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+
+    /// Convert the frontend policy to the (backend) policy used by qkernel
+    /// Default file path is current dir
+    #[command(arg_required_else_help = true)]
+    PreparePolicy {
+        policy_path: Option<String>,
+    },
     /// Allocate a terminal inside a container
     /// This terminal is cross platform runable
     #[command(arg_required_else_help = true)]
@@ -656,6 +663,22 @@ async fn main() -> Result<()> {
     let key_manager = KeyManager::init();
 
     match args.command {
+        Commands::PreparePolicy {
+            policy_path,
+        } => {
+            let policy_dir = if policy_path.is_some() {
+                policy_path.unwrap()
+            } else {
+                let current_dir = env::current_dir().unwrap();
+                
+                let policy_path = format!("{}/policy.json", current_dir.to_str().unwrap());
+                policy_path
+            };
+
+            let mut policy = kbs_policy::FrontEndKbsPolicy::default();
+            policy.load(&policy_dir).unwrap();
+            policy.get_back_end_policy().unwrap();
+        }
         Commands::PolicyUpdate {
             pod_name,
             policy_path
@@ -676,15 +699,17 @@ async fn main() -> Result<()> {
                 let policy_path = format!("{}/policy.json", current_dir.to_str().unwrap());
                 policy_path
             };
-            let mut policy = kbs_policy::KbsPolicy::default();
+            let mut policy = kbs_policy::FrontEndKbsPolicy::default();
             policy.load(&policy_dir).unwrap();
-            let policy_in_json_string = serde_json::to_string(&policy).unwrap();
+            let mut backend_policy = policy.get_back_end_policy().unwrap();
+            backend_policy.syscall_interceptor_config.syscalls = Vec::new();
+            let backend_policy_in_json_string = serde_json::to_string(&backend_policy).unwrap();
 
-            let policy_in_base64_string = Base64::encode_string(&policy_in_json_string.as_bytes());
+            let policy_in_base64_string = Base64::encode_string(&backend_policy_in_json_string.as_bytes());
             let mut update_cmd = POLICYUPDATE_KEYWORD.to_owned();
             update_cmd.push_str(&policy_in_base64_string);
 
-            println!("update_cmd {:?}", update_cmd);
+            // println!("update_cmd {:?}, policy {:?}", update_cmd, policy);
 
             let mut s = match Session::load() {
                 Ok(s) => s,
@@ -697,11 +722,11 @@ async fn main() -> Result<()> {
             };
 
             let privileged_req = prepare_priviled_exec_cmd(update_cmd, &key_manager.key_slice, &key_manager.encryption_key, &mut s);
-            info!("PolicyUpdate privileged req {:?}", privileged_req);
+            // info!("PolicyUpdate privileged req {:?}", privileged_req);
 
-            let mut test_verify_privileged_exec_cmd = privileged_req.clone();
-            let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
-            info!("PolicyUpdate verification_result {:?}", verification_result);
+            // let mut test_verify_privileged_exec_cmd = privileged_req.clone();
+            // let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
+            // info!("PolicyUpdate verification_result {:?}", verification_result);
 
             let attached = pods.exec(
                 &pod_name,
@@ -732,7 +757,7 @@ async fn main() -> Result<()> {
                     s
                 }
             };
-            println!("got session : {:?}", s);
+            // println!("got session : {:?}", s);
 
             termianl(pod_name, container_name, pods, key_manager, &mut s).await?;
 
@@ -759,18 +784,18 @@ async fn main() -> Result<()> {
                     s
                 }
             };
-            println!("got session : {:?}", s);
+            // println!("got session : {:?}", s);
 
             // let mut login_req = prepare_secure_vm_login_req (&key_manager.key_slice, &key_manager.encryption_key);
             // let login_cmd = verify_privileged_exec_cmd(&mut login_req, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
             // println!("login_cmd in qkenel req {:?}", login_cmd);
         
             let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key, &mut s);
-            info!("privileged req {:?}", privileged_req);
+            // info!("privileged req {:?}", privileged_req);
 
             let mut test_verify_privileged_exec_cmd = privileged_req.clone();
             let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
-            info!("verification_result {:?}", verification_result);
+            // info!("verification_result {:?}", verification_result);
 
             let attached = pods
             .exec(
