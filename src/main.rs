@@ -5,7 +5,6 @@ mod serialize;
 mod kbs_policy;
 
 extern crate strum;
-// use core::slice::SlicePattern;
 use std::ffi::OsString;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::env;
@@ -52,13 +51,13 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
 
-    /// Convert the frontend policy to the (backend) policy used by qkernel
+    /// Convert the frontend policy to the (backend) policy used by qkernel.
     /// Default file path is current dir
     #[command(arg_required_else_help = true)]
     PreparePolicy {
         policy_path: Option<String>,
     },
-    /// Allocate a terminal inside a container
+    /// Allocate a terminal inside a container.
     /// This terminal is cross platform runable
     #[command(arg_required_else_help = true)]
     Terminal {
@@ -425,13 +424,19 @@ async fn get_output (key_manager:KeyManager, mut attached: AttachedProcess) -> R
         stream_contents.extend_from_slice(&chunk?);
     }
 
-    let plain_text = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents).unwrap();
+    let res = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents);
+    if res.is_err() {
+        println!("Get error from the enclave!, you either don't have permission to execute the cmd or the seesion file is obsolte, check the policy file or delete session file, then try again");
+        println!("You either do not have permission to execute cmd, or the session file is outdated, check the policy file or delete session file, then try again");
+        println!("Check the policy file or delete session file, then try again");
+        return Ok(());
+    }
 
+    let plain_text = res.unwrap();
     let str = String::from_utf8(plain_text);
     
     if str.is_err() == true {
         println!("{:?}", str);
-
     }else {
         println!("{}", str.unwrap());
     }
@@ -510,9 +515,6 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
             message = stdin.next() => {
                 match message {
                     Some(Ok(message)) => {
-                        // let byte_u8 = message.to_vec();
-                        // let str_text = String::from_utf8(byte_u8).unwrap();
-                        // println!("stdin {}, {}", str_text, i);
                         input.write(&message).await?;
                     }
                     error => {
@@ -522,54 +524,19 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
                 }
             },
             message = output.next() => {
-
                 match message {
                     Some(Ok(message)) => {
-                        // let byte_u8 = message.to_vec();
-
-                        // let window = byte_u8.as_slice();
-    
-                        // let frames = Vec::<IoFrame>::new();
-                        
-                        // let a = from_bytes_cobs::<IoFrame>(&mut byte_u8).unwrap();
-                        // frames.push(a);
-                        // 'cobs: while !byte_u8.is_empty() {
-                        //     window = match cobs_stdout_buf.feed::<IoFrame>(&window) {
-                        //         FeedResult::Consumed => break 'cobs,
-                        //         FeedResult::OverFull(new_wind) => new_wind,
-                        //         FeedResult::DeserError(new_wind) => new_wind,
-                        //         FeedResult::Success { data, remaining } => {
-                        //             // Do something with `data: MyData` here.
-                    
-                        //             // dbg!(data);
-                        //             frames.push(data);
-                        //             remaining
-                        //         }
-                        //     };
-                        // }
-
-
-                        // stdout.write(&message).await?;
-                        // stdout.flush().await?;
-                        // if frames.len() == 0 {
-                        //     continue;
-                        // }
-                        // assert_eq!(frames.len(),  1);
-                        // println!("len {:?}", frames.len());
-                        // let plain_text = get_decoded_payloads(&key_manager.key, frames).unwrap();
-
-                        // let str_text = String::from_utf8(byte_u8).unwrap();
-                        // let str_trimed = str_text.trim();
-                        // let str_trimed_byte = str_trimed.as_bytes();
-
-                        // print!("stdout {:?}, {}", str_text, i);
                         stdout.write(&message).await?;
                         stdout.flush().await?;
 
                         i = i +1;
                     },
                     error => {
-                        println!("got error from pod stdout: {:?}, termianl allocation req is rejected", error);
+                        if error.is_none(){
+                            println!("terminal exit");
+                        } else {
+                            println!("got error from pod stdout: {:?}, termianl allocation req is rejected", error);
+                        }
                         break
                     },
                 }
@@ -582,9 +549,7 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
             },
         };
     }
-    crossterm::terminal::disable_raw_mode()?;
-    
-    
+    crossterm::terminal::disable_raw_mode()?; 
     Ok(())
 
 }
@@ -605,7 +570,7 @@ impl Session {
         self.save().unwrap();
     }
 
-    pub fn delete(&self) -> () {
+    pub fn _delete(&self) -> () {
         if !fs::metadata(SESSION_FILE_PATH).is_ok() {
             return;
         }
@@ -617,7 +582,7 @@ impl Session {
 
         let get_session_req = prepare_secure_vm_login_req(&key_manager.key_slice, &key_manager.encryption_key);
 
-        println!("login_to_qkernel exec before");
+        debug!("login_to_qkernel exec before");
         let attached = pods
         .exec(
             pod_name,
@@ -626,7 +591,7 @@ impl Session {
         )
         .await?;
 
-        println!("login_to_qkernel exec after");
+        debug!("login_to_qkernel exec after");
 
         let s = parse_login_req_output(key_manager, attached).await?;
 
@@ -648,7 +613,7 @@ async fn parse_login_req_output (key_manager: &KeyManager, mut attached: Attache
 
     let session =  postcard::from_bytes::<Session>(&mut plain_text[..])?;
 
-    println!("got session {:?}", session);
+    debug!("got session {:?}", session);
     
     Ok(session)
 }
@@ -685,7 +650,7 @@ async fn main() -> Result<()> {
         } => {
             const POLICYUPDATE_KEYWORD: &str = "PolicyUpdate ";
 
-            println!("PolicyUpdate pod_name {:?}, policy_path {:?}", pod_name, policy_path);
+            info!("PolicyUpdate pod_name {:?}, policy_path {:?}", pod_name, policy_path);
             assert!(pod_name.is_some());
 
             let pod_name = pod_name.unwrap();
@@ -714,7 +679,7 @@ async fn main() -> Result<()> {
             let mut s = match Session::load() {
                 Ok(s) => s,
                 Err(_) => {
-                    println!("PolicyUpdate session dosen't exist, let's get one from qkernel");
+                    info!("PolicyUpdate session dosen't exist, let's get one from qkernel");
                     let s = Session::login_to_qkernel(&key_manager, &pod_name, &pods).await.unwrap();
                     s.save().unwrap();
                     s
@@ -742,7 +707,7 @@ async fn main() -> Result<()> {
             container_name
         } => {
 
-            println!("Terminal pod_name {:?}, container_name {:?}", pod_name, container_name);
+            info!("Terminal pod_name {:?}, container_name {:?}", pod_name, container_name);
             assert!(pod_name.is_some());
 
             let pod_name = pod_name.unwrap();
@@ -751,13 +716,13 @@ async fn main() -> Result<()> {
             let mut s = match Session::load() {
                 Ok(s) => s,
                 Err(_) => {
-                    println!("session dosen't exist, let's get one from qkernel");
+                    error!("session dosen't exist, let's get one from qkernel");
                     let s = Session::login_to_qkernel(&key_manager, &pod_name, &pods).await.unwrap();
                     s.save().unwrap();
                     s
                 }
             };
-            // println!("got session : {:?}", s);
+            debug!("got session : {:?}", s);
 
             termianl(pod_name, container_name, pods, key_manager, &mut s).await?;
 
@@ -767,7 +732,7 @@ async fn main() -> Result<()> {
             cmd
         } => {
 
-            println!("pod_name {:?}, cmd {:?}", pod_name, cmd);
+            info!("pod_name {:?}, cmd {:?}", pod_name, cmd);
             assert!(pod_name.is_some());
             assert!(cmd.is_some());
 
@@ -778,7 +743,7 @@ async fn main() -> Result<()> {
             let mut s = match Session::load() {
                 Ok(s) => s,
                 Err(_) => {
-                    println!("session dosen't exist, let's get one from qkernel");
+                    error!("session dosen't exist, let's get one from qkernel");
                     let s = Session::login_to_qkernel(&key_manager, &pod_name, &pods).await.unwrap();
                     s.save().unwrap();
                     s
@@ -791,12 +756,8 @@ async fn main() -> Result<()> {
             // println!("login_cmd in qkenel req {:?}", login_cmd);
         
             let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key, &mut s);
-            // info!("privileged req {:?}", privileged_req);
-
-            let mut test_verify_privileged_exec_cmd = privileged_req.clone();
-            let verification_result = verify_privileged_exec_cmd(&mut test_verify_privileged_exec_cmd, &key_manager.key_slice, &key_manager.encryption_key).unwrap();
-            // info!("verification_result {:?}", verification_result);
-
+            debug!("privileged req {:?}", privileged_req);
+            
             let attached = pods
             .exec(
                 &pod_name,
