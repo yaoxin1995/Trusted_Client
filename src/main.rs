@@ -360,12 +360,12 @@ impl App {
             lp = lp.fields(&format!("metadata.name={n}"));
         }
         // present a dumb table for it for now. kubectl does not do this anymore.
-        let mut stream = watcher(api, lp).applied_objects().boxed();
-        println!("{0:<width$} {1:<20}", "NAME", "AGE", width = 63);
-        while let Some(inst) = stream.try_next().await? {
-            let age = format_creation_since(inst.creation_timestamp());
-            println!("{0:<width$} {1:<20}", inst.name_any(), age, width = 63);
-        }
+        // let mut stream = watcher(api, lp).applied_objects().boxed();
+        // println!("{0:<width$} {1:<20}", "NAME", "AGE", width = 63);
+        // while let Some(inst) = stream.try_next().await? {
+        //     let age = format_creation_since(inst.creation_timestamp());
+        //     println!("{0:<width$} {1:<20}", inst.name_any(), age, width = 63);
+        // }
         Ok(())
     }
 
@@ -667,8 +667,7 @@ async fn main() -> Result<()> {
             };
             let mut policy = kbs_policy::FrontEndKbsPolicy::default();
             policy.load(&policy_dir).unwrap();
-            let mut backend_policy = policy.get_back_end_policy().unwrap();
-            backend_policy.syscall_interceptor_config.syscalls = Vec::new();
+            let backend_policy = policy.get_back_end_policy().unwrap();
             let backend_policy_in_json_string = serde_json::to_string(&backend_policy).unwrap();
 
             let policy_in_base64_string = Base64::encode_string(&backend_policy_in_json_string.as_bytes());

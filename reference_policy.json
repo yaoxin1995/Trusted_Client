@@ -393,10 +393,7 @@
             "sys_process_mrelease",
             "sys_futex_waitv",
             "sys_set_mempolicy_home_node",
-            "sys_attestation_report",
-            "sys_socket_produce",
-            "sys_socket_consume",
-            "sys_proxy"
+            "sys_attestation_report"
         ]
     }
 }

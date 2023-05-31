@@ -561,7 +561,7 @@ pub struct BackEndSyscallInterceptorConfig {
     pub enable: bool,
     pub mode: SystemCallInterceptorMode,
     pub default_action: DefaultAction,
-    pub syscalls: Vec<u64>
+    pub syscalls: [u64; 8]
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialOrd, Ord, Eq, PartialEq, Serialize, Deserialize)]
@@ -624,15 +624,13 @@ impl FrontEndKbsPolicy {
     }
 
 
-
     pub fn get_back_end_policy(&mut self) -> Result<BackEndKbsPolicy> {
 
 
         let allowed_syscall_number_list = self.get_allowed_syscall_number_list();
-
-
+        let allowed_list_in_u64 = convert_vec_to_u64(allowed_syscall_number_list);
         let backend_syscall_config = BackEndSyscallInterceptorConfig {
-            syscalls: allowed_syscall_number_list,
+            syscalls: allowed_list_in_u64,
             mode: self.syscall_interceptor_config.mode.clone(),
             enable: self.syscall_interceptor_config.enable,
             default_action: self.syscall_interceptor_config.default_action.clone()
@@ -673,3 +671,23 @@ impl FrontEndKbsPolicy {
 }
 
 
+fn convert_vec_to_u64(allowed_list: Vec<u64>)-> [u64; 8] {
+
+    let mut allowed_list_in_u64 : [u64; 8] = [0; 8];
+
+
+    for i in allowed_list {
+
+        let index = i / 64;
+        let position_in_u64 = i % 64;
+
+        let u64_list = allowed_list_in_u64[index as usize];
+
+        let new_list_u64 = u64_list | 1 << position_in_u64;
+
+        allowed_list_in_u64[index as usize] = new_list_u64;
+    }
+
+
+    return allowed_list_in_u64;
+}
