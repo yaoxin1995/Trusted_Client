@@ -643,7 +643,7 @@ async fn main() -> Result<()> {
 
             let mut policy = kbs_policy::FrontEndKbsPolicy::default();
             policy.load(&policy_dir).unwrap();
-            policy.get_back_end_policy().unwrap();
+            policy.get_back_end_policy(true).unwrap();
         }
         Commands::PolicyUpdate {
             pod_name,
@@ -667,7 +667,7 @@ async fn main() -> Result<()> {
             };
             let mut policy = kbs_policy::FrontEndKbsPolicy::default();
             policy.load(&policy_dir).unwrap();
-            let backend_policy = policy.get_back_end_policy().unwrap();
+            let backend_policy = policy.get_back_end_policy(false).unwrap();
             let backend_policy_in_json_string = serde_json::to_string(&backend_policy).unwrap();
 
             let policy_in_base64_string = Base64::encode_string(&backend_policy_in_json_string.as_bytes());

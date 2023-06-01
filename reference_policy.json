@@ -1,5 +1,6 @@
 
 {
+    "enclave_mode": "Development",
     "enable_policy_updata": true,
     "privileged_user_config" :{
         "enable_terminal": true,
@@ -27,9 +28,53 @@
         "enable": true,
         "allowed_max_log_level": "Debug"
     },
+
+    "app_launch_ref_measurement":"9oeLmDI8R7Tl3umNK5NjHkx43GWSp2g8VWul+QeAO4na9gY3f5pQhHZL1JXUF2aEdotDOSh6iKF4hoIQCaSBeA==",
+
+    "runtime_reference_measurements": [
+        {
+            "binary_name": "/etc/ld.so.cache",
+             "reference_measurement":  "aUPtssu1OuwIdxTwK2p7NmbTr+vuWxsY7OTc7bXojZYBPwlExixiB1D4prgw3C70nLWQGlGiCbXb2HdMmYcdlw=="
+        },
+        {
+            "binary_name": "/lib/x86_64-linux-gnu/libgcc_s.so.1",
+             "reference_measurement":  "d3CMidyo4YYUdzT8dxuDN/qFYiE6FeRwEbELwNZrb1GEuKGHnK6oWa3o+XkCNsunqZmdDCxhWBOPkkHMX3r26g=="
+        },
+        {
+            "binary_name": "/lib/x86_64-linux-gnu/libpthread-2.31.so",
+             "reference_measurement":  "cUBY20D0mDvdTxA0FjEMfuMnjeeDnDGW1kCZ67SEiTnK8mE7GKakh9J8t2zFUuC4D7Z/r+9gkoD/f6ayele6jg=="
+        },
+        {
+            "binary_name": "/lib/x86_64-linux-gnu/libdl-2.31.so",
+             "reference_measurement":  "URMsq8pp+dphpScZ/0WAxSKZ+34+sRESHo87E4kDRD4BsFn0UMjrZ4JcDITOjCBVYbNuCMuwlpz7YWB60jcMSQ=="
+        },
+        {
+            "binary_name": "/lib/x86_64-linux-gnu/libc-2.31.so",
+             "reference_measurement":  "7to8KbR60RsQjbHYahiNyvSaCml4EJTn0n1Uhz6rrXEiYSqqFEIIo7urLvWVzu0K3Yu7SlhM2LMr78Ai6HqYDQ=="
+        },
+        {
+            "binary_name": "/lib/x86_64-linux-gnu/libselinux.so.1",
+             "reference_measurement":  "IyGvK59nwsN4jIQMdIbdZEBTamPzduCiurb3cn/Y6W7T8E2IwNnRktSmKDL/GTfyY/lwyZuZp65W9HhLpfrEcg=="
+        },
+
+        {
+            "binary_name": "/usr/lib/x86_64-linux-gnu/libpcre2-8.so.0.10.1",
+             "reference_measurement":  "ieGipPqWp/w6UE/e8PBgEEs15D1xQO4jqaHIVXK0vOob1eBk4nTyiUNQeb+rgf8BEd7906IohVq0r5JirVnOrQ=="
+        },
+
+        {
+            "binary_name": "/bin/ls",
+             "reference_measurement":  "yomd9DTAjCmABc5e/WTIGOqFji3WME+rcbeD6aX6SrTjG4FhAiBoD1buLUW5NcNXa9keCdsSS1Ng9Yl/qgd6DA=="
+        },
+
+        {
+            "binary_name": "/bin/cat",
+             "reference_measurement": "z11qab6ZNQxeMKkuo8YXxX8YmqF116ch+qYVKbFaEOJvZ8EBNIRQ1Ua7UgM/KHGvNrza5QCxpf9RntiqAAPA2Q=="
+        }
+    ],
     
     "syscall_interceptor_config": {
-        "enable": false,
+        "enable": true,
         "mode":  "Global",
         "default_action": "ScmpActErrno",
         "syscalls": [

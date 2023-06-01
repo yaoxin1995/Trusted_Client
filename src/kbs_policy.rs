@@ -582,9 +582,30 @@ pub struct QlogPolicy {
     pub allowed_max_log_level: QkernelDebugLevel
 }
 
+#[derive(Default, Clone, Copy, Debug, PartialOrd, Ord, Eq, PartialEq, Serialize, Deserialize)]
+pub enum EnclaveMode {
+    #[default]
+    Development,
+    Production
+}
+
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeReferenceMeasurement {
+    #[serde(rename = "binary_name")]
+    pub binary_name: String,
+    #[serde(rename = "reference_measurement")]
+    pub reference_measurement: String,
+}
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct FrontEndKbsPolicy {
+    #[serde(rename = "app_launch_ref_measurement")]
+    pub app_launch_ref_measurement: String,
+    #[serde(rename = "runtime_reference_measurements")]
+    pub runtime_reference_measurements: Vec<RuntimeReferenceMeasurement>,
+    pub enclave_mode: EnclaveMode,
     pub enable_policy_updata: bool,
     pub privileged_user_config: PrivilegedUserConfig,
     pub unprivileged_user_config:  UnprivilegedUserConfig,
@@ -596,6 +617,11 @@ pub struct FrontEndKbsPolicy {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct BackEndKbsPolicy {
+    #[serde(rename = "app_launch_ref_measurement")]
+    pub app_launch_ref_measurement: String,
+    #[serde(rename = "runtime_reference_measurements")]
+    pub runtime_reference_measurements: Vec<RuntimeReferenceMeasurement>,
+    pub enclave_mode: EnclaveMode,
     pub enable_policy_updata: bool,
     pub privileged_user_config: PrivilegedUserConfig,
     pub unprivileged_user_config:  UnprivilegedUserConfig,
@@ -624,7 +650,7 @@ impl FrontEndKbsPolicy {
     }
 
 
-    pub fn get_back_end_policy(&mut self) -> Result<BackEndKbsPolicy> {
+    pub fn get_back_end_policy(&mut self, is_prepare: bool) -> Result<BackEndKbsPolicy> {
 
 
         let allowed_syscall_number_list = self.get_allowed_syscall_number_list();
@@ -637,14 +663,35 @@ impl FrontEndKbsPolicy {
         };
 
 
-        let backend_policy = BackEndKbsPolicy {
-            enable_policy_updata: self.enable_policy_updata.clone(),
-            privileged_user_config: self.privileged_user_config.clone(),
-            unprivileged_user_config: self.unprivileged_user_config.clone(),
-            privileged_user_key_slice: self.privileged_user_key_slice.clone(),
-            syscall_interceptor_config : backend_syscall_config,
-            qkernel_log_config: self.qkernel_log_config,
+        let backend_policy = if is_prepare {
+            BackEndKbsPolicy {
+                app_launch_ref_measurement: self.app_launch_ref_measurement.clone(),
+                runtime_reference_measurements: self.runtime_reference_measurements.clone(),
+                enclave_mode: self.enclave_mode.clone(),
+                enable_policy_updata: self.enable_policy_updata.clone(),
+                privileged_user_config: self.privileged_user_config.clone(),
+                unprivileged_user_config: self.unprivileged_user_config.clone(),
+                privileged_user_key_slice: self.privileged_user_key_slice.clone(),
+                syscall_interceptor_config : backend_syscall_config,
+                qkernel_log_config: self.qkernel_log_config,
+            }
+            
+        } else {
+            BackEndKbsPolicy {
+                app_launch_ref_measurement: String::new(),
+                runtime_reference_measurements: Vec::new(),
+                enclave_mode: self.enclave_mode.clone(),
+                enable_policy_updata: self.enable_policy_updata.clone(),
+                privileged_user_config: self.privileged_user_config.clone(),
+                unprivileged_user_config: self.unprivileged_user_config.clone(),
+                privileged_user_key_slice: self.privileged_user_key_slice.clone(),
+                syscall_interceptor_config : backend_syscall_config,
+                qkernel_log_config: self.qkernel_log_config,
+            }
+
         };
+        
+
 
         super::serialize::serialize(&backend_policy, BACKEND_POLICY_FILE_PATH).unwrap();
 
