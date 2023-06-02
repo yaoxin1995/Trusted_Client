@@ -425,6 +425,8 @@ async fn get_output (key_manager:KeyManager, mut attached: AttachedProcess) -> R
         stream_contents.extend_from_slice(&chunk?);
     }
 
+    
+
     let res = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents);
     if res.is_err() {
         println!("Get error from the enclave, Or the cmd the secrure client issued returns nothing");
@@ -799,7 +801,7 @@ async fn main() -> Result<()> {
                 ).await?.boxed();
                 // println!("1");
 
-                let mut cobs_buf: CobsAccumulator<4096> = CobsAccumulator::new();
+                let mut cobs_buf: CobsAccumulator<8096> = CobsAccumulator::new();
                 
                 while let Some(line) = logs.try_next().await? {
 

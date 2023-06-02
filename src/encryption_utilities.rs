@@ -6,6 +6,7 @@ use aes_gcm::{
 
 use aes_gcm::aead::rand_core::RngCore;
 use serde::*;
+use tracing_subscriber::field::debug;
 // use base64ct::{Base64, Encoding};
 /// Nonce: unique per message.
 /// 96-bits (12 bytes)
@@ -69,6 +70,11 @@ pub fn decrypt(key: &GenericArray<u8, U32>, cipher_txt: &[u8], nouce: &[u8]) -> 
     let cipher = Aes256Gcm::new(key);
     // let nonce_rnd = &cipher_txt[..NONCE_LENGTH];
     let nonce = Nonce::from_slice(nouce);
+    
+
+    let encypted_text =  String::from_utf8_lossy(&cipher_txt);
+    println!("encrypted exc resutl {:?}", encypted_text);
+    
     let plain_txt = cipher
         .decrypt(nonce, &cipher_txt[..])
         .map_err(|e| super::error::Error::Common(format!("failed to dencryp the data error {:?}", e)))?;
