@@ -73,7 +73,7 @@ pub fn decrypt(key: &GenericArray<u8, U32>, cipher_txt: &[u8], nouce: &[u8]) -> 
     
 
     let encypted_text =  String::from_utf8_lossy(&cipher_txt);
-    println!("encrypted exc resutl {:?}", encypted_text);
+    println!("encrypted exc result {:?}", encypted_text);
     
     let plain_txt = cipher
         .decrypt(nonce, &cipher_txt[..])
