@@ -50,6 +50,7 @@ strum = "0.24"
 strum_macros = "0.24"
 kube = {version = "^0.82.2" }
 k8s-openapi = { version = "0.18.0" }
+env_logger = "0.10.0"
 
 [dependencies.lazy_static]
 version = "1.0"

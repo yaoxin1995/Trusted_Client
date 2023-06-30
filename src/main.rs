@@ -425,6 +425,9 @@ async fn get_output (key_manager:KeyManager, mut attached: AttachedProcess) -> R
         stream_contents.extend_from_slice(&chunk?);
     }
 
+    let str =  String::from_utf8_lossy(&stream_contents);
+    info!("EXEC process output {:?}", str);
+
     let res = get_cmd_res_in_plaintext(&key_manager.encryption_key, &mut stream_contents);
     if res.is_err() {
         println!("Get error from the enclave, Or the cmd the secrure client issued returns nothing");
@@ -624,6 +627,11 @@ async fn parse_login_req_output (key_manager: &KeyManager, mut attached: Attache
 async fn main() -> Result<()> {
     let args = Cli::parse();
 
+    env_logger::Builder::new()
+    .parse_filters("info")
+    .init();
+
+
     let client = Client::try_default().await?;
     let discovery = Discovery::new(client.clone()).run().await?;
     let key_manager = KeyManager::init();
@@ -756,7 +764,9 @@ async fn main() -> Result<()> {
             // println!("login_cmd in qkenel req {:?}", login_cmd);
         
             let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key, &mut s);
-            debug!("privileged req {:?}", privileged_req);
+
+            let print_cmd = vec![privileged_req[0].clone(), privileged_req[2].clone(), privileged_req[3].clone()];
+            info!("privileged req {:?}", print_cmd);
             
             let attached = pods
             .exec(
