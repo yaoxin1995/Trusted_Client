@@ -82,7 +82,6 @@ fn random_bytes(slice: &mut [u8]) -> (){
     assert!(slice.len() == NONCE_LENGTH);
     let mut rng = OsRng;
     rng.fill_bytes(slice);
-    println!("generate nounce {:?}", slice);
     // rmd_nonce
     // thread_rng().gen::<[u8; NONCE_LENGTH]>()
 }
