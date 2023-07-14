@@ -512,18 +512,16 @@ pub struct SingleShotCommandLineModeConfig {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PrivilegedUserConfig {
-    pub enable_terminal: bool,
-    pub enable_single_shot_command_line_mode: bool,
-    pub single_shot_command_line_mode_configs : SingleShotCommandLineModeConfig,
-    pub exec_result_encryption: bool,
-    pub enable_container_logs_encryption:bool,
+    pub allowed_cmd: Vec<String>,
+    pub allowed_dir: Vec<String>,
+    pub no_interactive_process_stdout_err_encryption:bool,
+    pub interactive_porcess_stdout_err_encryption:bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct UnprivilegedUserConfig {
-    pub enable_terminal: bool,
-    pub enable_single_shot_command_line_mode: bool,
-    pub single_shot_command_line_mode_configs : SingleShotCommandLineModeConfig,
+    pub allowed_cmd: Vec<String>,
+    pub allowed_dir: Vec<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]

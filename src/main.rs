@@ -485,7 +485,7 @@ async fn termianl(pod_name: String, container_name : Option<String>, pods: Api<P
     // We also watch for change in your terminal size and send it to the server so that application that use the size work properly.
     crossterm::terminal::enable_raw_mode()?;
 
-    let cmd = "sh".to_string();
+    let cmd = "/bin/sh".to_string();
     let privileged_req = prepare_priviled_exec_cmd(cmd, &key_manager.key_slice, &key_manager.encryption_key, s);
 
     let mut attached: AttachedProcess = pods
